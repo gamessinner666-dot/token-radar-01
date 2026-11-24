@@ -1,6 +1,13 @@
-// Deterministic 3-tier pre-token discovery and strict hygiene filter (zero hardcoded names).
+// Deterministic 3-tier discovery, strict hygiene filters, and MECE 758-protocol ledger accounting.
 
-import type { CandidateProtocol, DiscoveryResult, Snapshot, SnapshotProtocol } from './types.ts';
+import { EXCLUDED_COMP_CATEGORIES } from './comparables.ts';
+import type {
+  CandidateProtocol,
+  DiscoveryResult,
+  LedgerBuckets,
+  Snapshot,
+  SnapshotProtocol,
+} from './types.ts';
 
 export const HYGIENE_EXCLUDED_CATEGORIES = new Set<string>([
   'CEX',
@@ -15,7 +22,16 @@ export const HYGIENE_EXCLUDED_CATEGORIES = new Set<string>([
   'Stablecoin Wrapper',
 ]);
 
-/** Matches spaced version suffixes (" V2", " v3", " 2.0") AND unspaced uppercase suffixes ("CommunityV3"). */
+export const BRIDGE_CATEGORIES = new Set<string>(['Bridge', 'Canonical Bridge', 'Cross Chain Bridge']);
+export const LST_BTC_CATEGORIES = new Set<string>([
+  'Liquid Staking',
+  'Liquid Restaking',
+  'Restaked BTC',
+  'Anchor BTC',
+  'Decentralized BTC',
+  'Stablecoin Wrapper',
+]);
+
 export const VERSIONED_NAME_RE = /(\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)|[A-Za-z]V\d+)$/;
 export const WRAPPED_NAME_RE = /\b(wrapped|staked|staking)\b/i;
 export const EXCHANGE_PREFIX_RE = /^(Binance|Coinbase|Bybit|Kraken|Bitget|OKX|Bitfinex|Gemini)\b/i;
@@ -31,12 +47,19 @@ const GENERIC_BRAND_STEMS = new Set<string>([
   'dao', 'dex', 'cex', 'nft', 'rwa', 'l2',
 ]);
 
-/** A protocol records no token when all three token identifiers are null. */
 export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
 }
 
-/** Build brand-stem -> tokenized symbol map from all 416 protocols that record any token field. */
+export function isStandaloneForOdds(p: SnapshotProtocol): boolean {
+  const cat = p.category ?? '';
+  if (HYGIENE_EXCLUDED_CATEGORIES.has(cat)) return false;
+  if (VERSIONED_NAME_RE.test(p.name) || WRAPPED_NAME_RE.test(p.name) || EXCHANGE_PREFIX_RE.test(p.name)) {
+    return false;
+  }
+  return true;
+}
+
 function buildTokenizedStemMap(protocols: readonly SnapshotProtocol[]): Map<string, string> {
   const map = new Map<string, { symbol: string; hasMcap: boolean }>();
   for (const p of protocols) {
@@ -57,17 +80,10 @@ function buildTokenizedStemMap(protocols: readonly SnapshotProtocol[]): Map<stri
 
 function buildFlags(p: SnapshotProtocol, siblingSymbol: string | null): string[] {
   const flags: string[] = [];
-  if (siblingSymbol !== null) {
-    flags.push(`Tokenized Sibling: ${siblingSymbol}`);
-  }
-  if (p.listed_at === null) {
-    flags.push('Missing listed_at (neutral 1.00 maturity)');
-  }
-  if (p.change_7d === null) {
-    flags.push('Missing 7d TVL delta');
-  } else if (p.change_7d > 200) {
-    flags.push('Extreme 7d surge (>200%)');
-  }
+  if (siblingSymbol !== null) flags.push(`Tokenized Sibling: ${siblingSymbol}`);
+  if (p.listed_at === null) flags.push('Missing listed_at (median age prior)');
+  if (p.change_7d === null) flags.push('Missing 7d TVL delta');
+  else if (p.change_7d > 200) flags.push('Extreme 7d surge (>200%)');
   if (p.chains.length === 1 && p.chains[0] === 'Bitcoin' && p.category === 'Payments') {
     flags.push('Bitcoin P2P / Infra (low token probability)');
   }
@@ -79,33 +95,30 @@ function buildFlags(p: SnapshotProtocol, siblingSymbol: string | null): string[]
   ) {
     flags.push('Custodial / KYC / CeDeFi disclosure');
   }
-  if (p.category === 'Chain') {
-    flags.push('Base L1/L2 chain infrastructure');
-  }
   return flags;
 }
 
-/**
- * Partition snapshot into:
- * - Tier 1: Mandatory Watchlist (100% coverage)
- * - Tier 2: Large-Cap Expansion (>= floor_usd clean non-watchlist pre-token)
- * - Tier 3: Early Discovery (< floor_usd clean non-watchlist pre-token)
- */
-export function discoverCandidates(snapshot: Snapshot): DiscoveryResult {
+export function discoverCandidates(
+  snapshot: Snapshot,
+  compSlugs: ReadonlySet<string>,
+): DiscoveryResult {
   const bySlug = new Map<string, SnapshotProtocol>(snapshot.protocols.map((p) => [p.slug, p]));
   const tokenizedStems = buildTokenizedStemMap(snapshot.protocols);
   const watchlistSet = new Set<string>(snapshot.watchlist);
 
   const candidates: CandidateProtocol[] = [];
-  let tokenizedExcluded = 0;
-  let rawPreToken = 0;
-  let hygieneDropped = 0;
-  let siblingDropped = 0;
-  let watchlistCount = 0;
-  let largeCapCount = 0;
-  let earlyCount = 0;
+  const ledger: LedgerBuckets = {
+    total: snapshot.protocols.length,
+    watchlist: 0,
+    large_cap: 0,
+    early: 0,
+    priced_comps: 0,
+    other_tokenized: 0,
+    excl_bridges: 0,
+    excl_lst_btc: 0,
+    excl_cex_ver_sib: 0,
+  };
 
-  // Tier 1: Mandatory watchlist (unconditionally kept)
   for (const slug of snapshot.watchlist) {
     const p = bySlug.get(slug);
     if (!p) continue;
@@ -117,39 +130,48 @@ export function discoverCandidates(snapshot: Snapshot): DiscoveryResult {
       flags: buildFlags(p, siblingSymbol),
       sibling_symbol: siblingSymbol,
     });
-    watchlistCount += 1;
+    ledger.watchlist += 1;
   }
 
-  // Tiers 2 & 3: Clean pre-token expansion
   for (const p of snapshot.protocols) {
-    if (!isPreToken(p)) {
-      tokenizedExcluded += 1;
+    if (watchlistSet.has(p.slug)) continue;
+    if (compSlugs.has(p.slug)) {
+      ledger.priced_comps += 1;
       continue;
     }
-    rawPreToken += 1;
-    if (watchlistSet.has(p.slug)) continue;
+    if (!isPreToken(p)) {
+      ledger.other_tokenized += 1;
+      continue;
+    }
 
     const cat = p.category ?? '';
-    if (
-      HYGIENE_EXCLUDED_CATEGORIES.has(cat) ||
-      VERSIONED_NAME_RE.test(p.name) ||
-      WRAPPED_NAME_RE.test(p.name) ||
-      EXCHANGE_PREFIX_RE.test(p.name)
-    ) {
-      hygieneDropped += 1;
+    if (BRIDGE_CATEGORIES.has(cat)) {
+      ledger.excl_bridges += 1;
+      continue;
+    }
+    if (LST_BTC_CATEGORIES.has(cat) || WRAPPED_NAME_RE.test(p.name)) {
+      ledger.excl_lst_btc += 1;
+      continue;
+    }
+    if (cat === 'CEX' || VERSIONED_NAME_RE.test(p.name) || EXCHANGE_PREFIX_RE.test(p.name)) {
+      ledger.excl_cex_ver_sib += 1;
+      continue;
+    }
+    // Also exclude non-watchlist remaining excluded comp categories if any (Token Locker / Launchpad)
+    if (EXCLUDED_COMP_CATEGORIES.has(cat)) {
+      ledger.excl_cex_ver_sib += 1;
       continue;
     }
 
     const stem = p.slug.split('-')[0]?.toLowerCase() ?? '';
-    const siblingSymbol = tokenizedStems.get(stem) ?? null;
-    if (siblingSymbol !== null) {
-      siblingDropped += 1;
+    if (tokenizedStems.has(stem)) {
+      ledger.excl_cex_ver_sib += 1;
       continue;
     }
 
     const tier = p.tvl_usd >= snapshot.floor_usd ? 'large-cap' : 'early';
-    if (tier === 'large-cap') largeCapCount += 1;
-    else earlyCount += 1;
+    if (tier === 'large-cap') ledger.large_cap += 1;
+    else ledger.early += 1;
 
     candidates.push({
       protocol: p,
@@ -159,17 +181,5 @@ export function discoverCandidates(snapshot: Snapshot): DiscoveryResult {
     });
   }
 
-  return {
-    candidates,
-    counts: {
-      total_protocols: snapshot.protocols.length,
-      tokenized_excluded: tokenizedExcluded,
-      raw_pre_token: rawPreToken,
-      watchlist: watchlistCount,
-      large_cap: largeCapCount,
-      early: earlyCount,
-      hygiene_dropped: hygieneDropped,
-      sibling_dropped: siblingDropped,
-    },
-  };
+  return { candidates, ledger };
 }

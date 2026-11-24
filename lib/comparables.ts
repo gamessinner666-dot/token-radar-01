@@ -1,5 +1,5 @@
-// Clean comparable-entity construction, 6-sector taxonomy, brand-verified symbol aggregation,
-// and 25-iteration Huber IRLS fixed-effects TVL elasticity estimation.
+// Comparable universe construction, 6-sector taxonomy, Stage 1 Huber+Ridge price model,
+// and Stage 2 L2-logistic token-odds model (Node 22 erasable TS, stdlib only).
 
 import type { ComparableEntity, SectorName, Snapshot, SnapshotProtocol } from './types.ts';
 
@@ -75,7 +75,6 @@ export function sectorOf(category: string | null): SectorName {
 
 const DAY_MS = 86_400_000;
 
-/** Whole UTC days elapsed since `listedAt` at `asOf`, clamped at 0; null if missing/invalid. */
 export function ageDays(asOf: string, listedAt: string | null): number | null {
   if (listedAt === null) return null;
   const a = Date.parse(`${asOf}T00:00:00Z`);
@@ -88,33 +87,25 @@ export function compareCodeUnit(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-export function quantile(sorted: readonly number[], q: number): number {
-  if (sorted.length === 0) return 0;
-  if (sorted.length === 1) return sorted[0]!;
-  const pos = q * (sorted.length - 1);
-  const lo = Math.floor(pos);
-  const hi = Math.min(sorted.length - 1, lo + 1);
-  const frac = pos - lo;
-  return sorted[lo]! * (1 - frac) + sorted[hi]! * frac;
-}
-
-export function median(values: readonly number[]): number {
-  if (values.length === 0) return 0;
-  const s = [...values].sort((a, b) => a - b);
-  return quantile(s, 0.5);
-}
-
-export function iqr(values: readonly number[]): number {
-  if (values.length < 2) return 0;
-  const s = [...values].sort((a, b) => a - b);
-  return Math.max(0, quantile(s, 0.75) - quantile(s, 0.25));
-}
-
 export function clamp(val: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, val));
 }
 
-/** Extract >= 3 char brand stems from slug, first name word, and gecko_id to prevent ticker collisions. */
+export function quantile(values: readonly number[], q: number): number {
+  if (values.length === 0) return 0;
+  const s = [...values].sort((a, b) => a - b);
+  if (s.length === 1) return s[0]!;
+  const pos = q * (s.length - 1);
+  const lo = Math.floor(pos);
+  const hi = Math.min(s.length - 1, lo + 1);
+  const frac = pos - lo;
+  return s[lo]! * (1 - frac) + s[hi]! * frac;
+}
+
+export function median(values: readonly number[]): number {
+  return quantile(values, 0.5);
+}
+
 function brandStems(p: SnapshotProtocol): Set<string> {
   const stems = new Set<string>();
   const slugHead = p.slug.split('-')[0]?.toLowerCase() ?? '';
@@ -142,16 +133,8 @@ function sharesBrandStem(a: SnapshotProtocol, b: SnapshotProtocol): boolean {
   return false;
 }
 
-/**
- * Build the clean comparable entity universe:
- * - Strictly requires `mcap_usd !== null && mcap_usd > 0` (rejects `autofinance: -1` and zeros)
- * - Excludes CEX / Bridge / Locker / Launchpad categories
- * - Aggregates TVL across brand-verified, same-sector, case-insensitive symbol siblings
- */
-export function buildComparables(snapshot: Snapshot): {
-  comparables: ComparableEntity[];
-  core: ComparableEntity[];
-} {
+/** Build the 98 clean entity comparables (mcap_usd > 0, non-CEX/Bridge/Locker/Launchpad, brand+sector sibling TVL). */
+export function buildComparables(snapshot: Snapshot): ComparableEntity[] {
   const bySymbol = new Map<string, SnapshotProtocol[]>();
   for (const p of snapshot.protocols) {
     if (p.symbol === null || p.symbol.trim() === '') continue;
@@ -176,7 +159,6 @@ export function buildComparables(snapshot: Snapshot): {
     if (symKey !== '') {
       for (const q of bySymbol.get(symKey) ?? []) {
         if (q.slug === p.slug) continue;
-        // Only fold sibling deployments that do not carry their own positive mcap_usd
         if (q.mcap_usd !== null && q.mcap_usd > 0) continue;
         if (sectorOf(q.category) === sec && sharesBrandStem(p, q)) {
           aggTvl += q.tvl_usd;
@@ -185,8 +167,6 @@ export function buildComparables(snapshot: Snapshot): {
       }
     }
 
-    const ratio = p.mcap_usd / aggTvl;
-    const is_core = ratio >= 0.005 && ratio <= 10.0;
     comparables.push({
       slug: p.slug,
       name: p.name,
@@ -197,97 +177,255 @@ export function buildComparables(snapshot: Snapshot): {
       raw_tvl_usd: p.tvl_usd,
       tvl_usd: aggTvl,
       mcap_usd: p.mcap_usd,
-      ratio,
+      ratio: p.mcap_usd / aggTvl,
       n_siblings: siblings,
       change_7d: p.change_7d,
       age_days: ageDays(snapshot.as_of, p.listed_at),
-      is_core,
+      listed_at: p.listed_at,
+      loo_pred_usd: 0,
+      loo_miss: 1,
+      loo_dir: 'exact',
     });
   }
 
   comparables.sort(
     (a, b) => b.mcap_usd - a.mcap_usd || b.tvl_usd - a.tvl_usd || compareCodeUnit(a.slug, b.slug),
   );
-  const core = comparables.filter((c) => c.is_core);
-  return { comparables, core };
+  return comparables;
 }
 
-/**
- * Fit within-category fixed-effects log(mcap) vs log(tvl) elasticity `beta`
- * via 25-iteration Huber IRLS (delta = 1.0) with weighted group demeaning, clamped to [0.65, 0.90].
- */
-export function fitHuberFE(core: readonly ComparableEntity[]): number {
-  const byCat = new Map<string, ComparableEntity[]>();
-  for (const c of core) {
-    const arr = byCat.get(c.category) ?? [];
-    arr.push(c);
-    byCat.set(c.category, arr);
-  }
+export interface Stage1Fit {
+  ref_tvl_usd: number;
+  intercept: number;
+  beta_tvl: number;
+  cat_adj: Record<string, number>;
+}
 
-  interface FePoint {
-    groupIdx: number;
-    x: number;
-    y: number;
-    w: number;
-  }
-
-  const groups: ComparableEntity[][] = [];
-  const points: FePoint[] = [];
-  for (const [, arr] of [...byCat.entries()].sort((a, b) => compareCodeUnit(a[0], b[0]))) {
-    if (arr.length < 2) continue;
-    const groupIdx = groups.length;
-    groups.push(arr);
-    for (const c of arr) {
-      points.push({
-        groupIdx,
-        x: Math.log(c.tvl_usd),
-        y: Math.log(c.mcap_usd),
-        w: 1,
-      });
+/** Solve small dense linear system A*x = b via Gaussian elimination with partial pivoting. */
+function solveLinear(A: number[][], b: number[]): number[] {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]!]);
+  for (let i = 0; i < n; i++) {
+    let best = i;
+    for (let r = i + 1; r < n; r++) {
+      if (Math.abs(M[r]![i]!) > Math.abs(M[best]![i]!)) best = r;
+    }
+    if (best !== i) {
+      const tmp = M[i]!;
+      M[i] = M[best]!;
+      M[best] = tmp;
+    }
+    const piv = Math.abs(M[i]![i]!) < 1e-12 ? 1e-12 : M[i]![i]!;
+    for (let j = i; j <= n; j++) M[i]![j]! /= piv;
+    for (let r = 0; r < n; r++) {
+      if (r === i) continue;
+      const f = M[r]![i]!;
+      for (let j = i; j <= n; j++) M[r]![j]! -= f * M[i]![j]!;
     }
   }
+  return M.map((r) => r[n]!);
+}
 
-  if (points.length < 4) return 0.7433;
+export interface PriceEvalOpts {
+  flat?: boolean;
+  catK?: number;
+  secK?: number;
+  useG7d?: boolean;
+  useAge?: boolean;
+  useChains?: boolean;
+  usePlacebo?: boolean;
+}
 
-  let beta = 0.75;
-  const delta = 1.0;
+export interface CompWithPlacebo extends ComparableEntity {
+  placebo_g7d?: number;
+}
+
+/** General Stage 1 evaluator used for both the production fit and the dual ablation ladder. */
+export function fitAndPredictPrice(
+  train: readonly CompWithPlacebo[],
+  test: readonly CompWithPlacebo[],
+  globalMed7d: number,
+  opts: PriceEvalOpts,
+): { fit: Stage1Fit; preds: number[] } {
+  const ref = 100_000_000;
+  if (opts.flat) {
+    const flatLogR = median(train.map((c) => Math.log(c.mcap_usd / c.tvl_usd)));
+    const preds = test.map((c) => Math.max(1, c.tvl_usd * Math.exp(flatLogR)));
+    return {
+      fit: { ref_tvl_usd: ref, intercept: flatLogR, beta_tvl: 1, cat_adj: {} },
+      preds,
+    };
+  }
+
+  const feat = (c: CompWithPlacebo): number[] => {
+    const row = [1, Math.log(c.tvl_usd / ref)];
+    if (opts.useG7d) row.push(Math.tanh(((c.change_7d ?? globalMed7d) - globalMed7d) / 35));
+    if (opts.useAge) row.push(c.age_days === null ? 0 : Math.log((c.age_days + 30) / 365));
+    if (opts.useChains) row.push(Math.log(Math.max(1, c.chains.length)));
+    if (opts.usePlacebo) row.push(Math.tanh(((c.placebo_g7d ?? globalMed7d) - globalMed7d) / 35));
+    return row;
+  };
+
+  const X = train.map(feat);
+  const Y = train.map((c) => Math.log(c.mcap_usd / ref));
+  const p = X[0]!.length;
+  const w = new Array<number>(train.length).fill(1);
+  let coef = new Array<number>(p).fill(0);
+  const delta = 1.35;
 
   for (let iter = 0; iter < 25; iter++) {
-    const sumW = new Array<number>(groups.length).fill(0);
-    const sumWX = new Array<number>(groups.length).fill(0);
-    const sumWY = new Array<number>(groups.length).fill(0);
-
-    for (const pt of points) {
-      sumW[pt.groupIdx]! += pt.w;
-      sumWX[pt.groupIdx]! += pt.w * pt.x;
-      sumWY[pt.groupIdx]! += pt.w * pt.y;
+    const A = Array.from({ length: p }, (_, i) =>
+      Array.from({ length: p }, (_, j) => (i === j && i > 0 ? 1e-4 : 0)),
+    );
+    const B = new Array<number>(p).fill(0);
+    for (let i = 0; i < train.length; i++) {
+      const xi = X[i]!;
+      const yi = Y[i]!;
+      const wi = w[i]!;
+      for (let j = 0; j < p; j++) {
+        B[j]! += wi * xi[j]! * yi;
+        for (let k = 0; k < p; k++) A[j]![k]! += wi * xi[j]! * xi[k]!;
+      }
     }
-
-    const meanX = sumW.map((sw, g) => (sw > 0 ? sumWX[g]! / sw : 0));
-    const meanY = sumW.map((sw, g) => (sw > 0 ? sumWY[g]! / sw : 0));
-
-    let num = 0;
-    let den = 0;
-    for (const pt of points) {
-      const dx = pt.x - meanX[pt.groupIdx]!;
-      const dy = pt.y - meanY[pt.groupIdx]!;
-      num += pt.w * dx * dy;
-      den += pt.w * dx * dx;
-    }
-
-    if (den > 1e-12 && Number.isFinite(num / den)) {
-      beta = num / den;
-    }
-
-    // Update Huber weights from within-group residuals
-    for (const pt of points) {
-      const dx = pt.x - meanX[pt.groupIdx]!;
-      const dy = pt.y - meanY[pt.groupIdx]!;
-      const resid = dy - beta * dx;
-      const absR = Math.abs(resid);
-      pt.w = absR <= delta ? 1.0 : delta / absR;
+    coef = solveLinear(A, B);
+    for (let i = 0; i < train.length; i++) {
+      let pred = 0;
+      for (let j = 0; j < p; j++) pred += coef[j]! * X[i]![j]!;
+      const absR = Math.abs(Y[i]! - pred);
+      w[i] = absR <= delta ? 1 : delta / absR;
     }
   }
 
-  return Number.isFinite(beta) ? clamp(Math.round(beta * 10_000) / 10_000, 0.65, 0.90) : 0.7433;
+  const resids = train.map((c, i) => {
+    let pred = 0;
+    for (let j = 0; j < p; j++) pred += coef[j]! * X[i]![j]!;
+    return { c, r: Y[i]! - pred };
+  });
+
+  const secAdj = new Map<SectorName, number>();
+  if (opts.secK && opts.secK > 0) {
+    const byS = new Map<SectorName, number[]>();
+    for (const x of resids) {
+      const arr = byS.get(x.c.sector) ?? [];
+      arr.push(x.r);
+      byS.set(x.c.sector, arr);
+    }
+    for (const [sec, arr] of byS.entries()) {
+      const meanR = arr.reduce((a, b) => a + b, 0) / arr.length;
+      secAdj.set(sec, (arr.length * meanR) / (arr.length + opts.secK));
+    }
+  }
+
+  const cat_adj: Record<string, number> = {};
+  if (opts.catK && opts.catK > 0) {
+    const byC = new Map<string, number[]>();
+    for (const x of resids) {
+      const arr = byC.get(x.c.category) ?? [];
+      arr.push(x.r);
+      byC.set(x.c.category, arr);
+    }
+    for (const [cat, arr] of [...byC.entries()].sort((a, b) => compareCodeUnit(a[0], b[0]))) {
+      const prior = secAdj.get(sectorOf(cat)) ?? 0;
+      const meanR = arr.reduce((a, b) => a + b, 0) / arr.length;
+      cat_adj[cat] = Math.round(((arr.length * meanR + opts.catK * prior) / (arr.length + opts.catK)) * 10_000) / 10_000;
+    }
+  }
+
+  const preds = test.map((c) => {
+    const x = feat(c);
+    let lp = 0;
+    for (let j = 0; j < p; j++) lp += coef[j]! * x[j]!;
+    const adj = opts.catK ? (cat_adj[c.category] ?? secAdj.get(c.sector) ?? 0) : (secAdj.get(c.sector) ?? 0);
+    return Math.max(1, Math.exp(Math.log(ref) + lp + adj));
+  });
+
+  return {
+    fit: {
+      ref_tvl_usd: ref,
+      intercept: Math.round(coef[0]! * 10_000) / 10_000,
+      beta_tvl: Math.round(coef[1]! * 10_000) / 10_000,
+      cat_adj,
+    },
+    preds,
+  };
+}
+
+export interface StandalonePeer {
+  slug: string;
+  y: number;
+  sector: SectorName;
+  age_years: number | null;
+  age_filled: number;
+  listed_at: string | null;
+  ltvl: number;
+  g7d: number;
+  lch: number;
+  placebo: number;
+}
+
+export interface OddsEvalOpts {
+  useAge?: boolean;
+  useSector?: boolean;
+  useTvl?: boolean;
+  useG7d?: boolean;
+  useChains?: boolean;
+  usePlacebo?: boolean;
+}
+
+export const sigmoid = (z: number): number => 1 / (1 + Math.exp(-clamp(z, -20, 20)));
+
+/** Fit L2-regularized logistic regression for token launch propensity across standalone protocols. */
+export function fitLogisticOdds(
+  train: readonly StandalonePeer[],
+  opts: OddsEvalOpts,
+): { coef: number[]; predict: (p: StandalonePeer) => number } {
+  const feat = (p: StandalonePeer): number[] => {
+    const v = [1];
+    if (opts.useAge) v.push(Math.log(p.age_filled + 0.15));
+    if (opts.useSector) {
+      for (let s = 0; s < 5; s++) v.push(p.sector === SECTORS[s] ? 1 : 0);
+    }
+    if (opts.useTvl) v.push(p.ltvl);
+    if (opts.useG7d) v.push(p.g7d);
+    if (opts.useChains) v.push(p.lch);
+    if (opts.usePlacebo) v.push(p.placebo);
+    return v;
+  };
+
+  const X = train.map(feat);
+  const d = X[0]!.length;
+  const coef = new Array<number>(d).fill(0);
+  const lam = 1.5;
+
+  for (let it = 0; it < 20; it++) {
+    const H = Array.from({ length: d }, (_, i) =>
+      Array.from({ length: d }, (_, j) => (i === j && i > 0 ? lam : 0)),
+    );
+    const g = new Array<number>(d).fill(0);
+    for (let i = 0; i < train.length; i++) {
+      const xi = X[i]!;
+      let z = 0;
+      for (let j = 0; j < d; j++) z += coef[j]! * xi[j]!;
+      const pr = sigmoid(z);
+      const w = Math.max(1e-6, pr * (1 - pr));
+      const diff = train[i]!.y - pr;
+      for (let j = 0; j < d; j++) {
+        g[j]! += diff * xi[j]!;
+        for (let k = 0; k < d; k++) H[j]![k]! += w * xi[j]! * xi[k]!;
+      }
+    }
+    for (let j = 1; j < d; j++) g[j]! -= lam * coef[j]!;
+    const step = solveLinear(H, g);
+    for (let j = 0; j < d; j++) coef[j]! += step[j]!;
+  }
+
+  return {
+    coef,
+    predict: (p: StandalonePeer) => {
+      const x = feat(p);
+      let z = 0;
+      for (let j = 0; j < d; j++) z += coef[j]! * x[j]!;
+      return sigmoid(z);
+    },
+  };
 }

@@ -1,6 +1,4 @@
-// Token Radar 01 (radar-2) entrypoint — Node 22.18+ erasable TypeScript, stdlib only, zero network.
-// Reads /input/snapshot.json (or --input <file|dir>), runs empirical-Bayes radar-2 valuation,
-// writes /output/board.json + /output/data.js, copies dashboard/ & screenshots/, and builds /output/dossier.json.
+// Token Radar 01 (radar-3) entrypoint — Node 22.18+ erasable TypeScript, stdlib only, zero network.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -29,7 +27,6 @@ function arg(name: string, fallback: string): string {
   return found === undefined ? fallback : found.slice(prefix.length);
 }
 
-/** Recursively copy regular files, skipping dot-entries, in deterministic sorted order. */
 function copyDirRecursive(from: string, to: string): string[] {
   if (!existsSync(from)) return [];
   mkdirSync(to, { recursive: true });
@@ -42,9 +39,7 @@ function copyDirRecursive(from: string, to: string): string[] {
     const src = join(from, entry.name);
     const dst = join(to, entry.name);
     if (entry.isDirectory()) {
-      for (const child of copyDirRecursive(src, dst)) {
-        copied.push(`${entry.name}/${child}`);
-      }
+      for (const child of copyDirRecursive(src, dst)) copied.push(`${entry.name}/${child}`);
     } else if (entry.isFile()) {
       copyFileSync(src, dst);
       copied.push(entry.name);
@@ -80,9 +75,7 @@ const dashCheck = validateDashboardDir(dashOut);
 const shotsOut = join(outDir, 'screenshots');
 const shotFiles = copyDirRecursive(join(here, 'screenshots'), shotsOut);
 if (shotFiles.length < 3) {
-  process.stderr.write(
-    `token radar: screenshots/ has ${shotFiles.length} image(s); 3–4 required (1440x900 board, detail, filtered)\n`,
-  );
+  process.stderr.write(`token radar: screenshots/ has ${shotFiles.length} image(s); 3–4 required\n`);
   process.exit(1);
 }
 for (const name of shotFiles) {
@@ -101,9 +94,10 @@ const dossierCheck = validateDossierBytes(dossierBytes);
 writeFileSync(join(outDir, 'dossier.json'), dossierBytes);
 
 process.stdout.write(
-  `token radar (${radar.model_version}): ${snapshot.protocols.length} scanned -> ${board.length} ranked ` +
-    `(${radar.summary.watchlist_size} WL, ${radar.summary.large_cap_size} >=$50M, ${radar.summary.early_size} early; ` +
-    `${radar.summary.comparables_total} comparables, beta=${radar.calibration.beta_huber})\n` +
+  `token radar (${radar.model_version}): ${snapshot.protocols.length} ledger -> ${board.length} ranked ` +
+    `(FARM=${radar.summary.farm_count}, MARGINAL=${radar.summary.marginal_count}, SKIP=${radar.summary.skip_count}; ` +
+    `WF=x${radar.calibration.price_model.wf_miss}, LOO=x${radar.calibration.price_model.loo_miss}, ` +
+    `Brier=${radar.calibration.odds_model.wf_brier}, crc=${radar.calibration.board_checksum})\n` +
     `token radar: dashboard=${dashFiles.length} files (${dashCheck.totalBytes} B), ` +
     `screenshots=${shotFiles.length}, dossier=${dossierCheck.bytes} B (text=${dossierCheck.textBytes} B, 0 truncation)\n`,
 );

@@ -1,427 +1,294 @@
-// 10-Family Chain-Architecture x Category-Action Farming Intelligence Engine.
-// Covers all 115 snapshot chains with automatic lowest-gas routing, positive-EV ETH L1 thresholds,
-// non-EVM native assets/wallets, Insurance/CeDeFi/RWA risk disclosures, and zero airdrop promises.
+// Quantitative Net-of-Fees 10-Family Chain-Architecture x Category-Action Farming Engine.
+// Computes plan deposit size, itemized gas fees, hands-on time, 4% T-bill opportunity hurdle,
+// FARM/MARGINAL/SKIP verdict, break-even thresholds, quantified TVL exit triggers, and 8 steps.
 
-import type { ChainFamily, FarmMeta, FarmStep, SnapshotProtocol } from './types.ts';
+import { clamp } from './comparables.ts';
+import type { ChainFamily, FarmEconomics, FarmStepItem, FarmVerdict, SnapshotProtocol } from './types.ts';
 
-interface ChainProfile {
+export interface ChainProfile {
   family: ChainFamily;
   familyLabel: string;
   costOrder: number;
   wallet: string;
   gasAsset: string;
   gasTier: string;
-  setupGas: string;
-  actionGas: string;
-  minCap: number;
+  setupFee: number;
+  weeklyFee: number;
+  exitFee: number;
+  minFloor: number;
+  baseMins: number;
+  weeklyMins: number;
   cadence: string;
   cleanup: string;
 }
 
 const LOW_GAS_EVM_ORDER: readonly string[] = [
-  'Base',
-  'Arbitrum',
-  'Optimism',
-  'Polygon',
-  'Binance',
-  'Avalanche',
-  'Monad',
-  'Ink',
-  'Sonic',
-  'Scroll',
-  'Linea',
-  'Flare',
-  'Plume Mainnet',
-  'Mantle',
-  'Berachain',
-  'Hyperliquid L1',
-  'Unichain',
-  'World Chain',
-  'Katana',
-  'Soneium',
-  'Blast',
-  'Mode',
-  'Zircuit',
-  'zkSync Era',
-  'Taiko',
-  'Celo',
-  'Fraxtal',
-  'Etherlink',
-  'xDai',
-  'Sei',
-  'Plasma',
-  'Stable',
-  'Corn',
-  'Hemi',
-  'Morph',
-  'Arc',
-  'Fluent',
-  'Pharos',
-  'Rayls',
-  'Robinhood Chain',
-  'TAC',
-  'Tempo',
-  'XRPL EVM',
-  'Bittensor EVM',
+  'Base', 'Arbitrum', 'Optimism', 'Polygon', 'Binance', 'Avalanche', 'Monad', 'Ink',
+  'Sonic', 'Scroll', 'Linea', 'Flare', 'Plume Mainnet', 'Mantle', 'Berachain',
+  'Hyperliquid L1', 'Unichain', 'World Chain', 'Katana', 'Soneium', 'Blast', 'Mode',
+  'Zircuit', 'zkSync Era', 'Taiko', 'Celo', 'Fraxtal', 'Etherlink', 'xDai', 'Sei',
+  'Plasma', 'Stable', 'Corn', 'Hemi', 'Morph', 'Arc', 'Fluent', 'Pharos', 'Rayls',
+  'Robinhood Chain', 'TAC', 'Tempo', 'XRPL EVM', 'Bittensor EVM',
 ];
 
 const BTC_L2_CHAINS = new Set<string>([
-  'BSquared',
-  'CORE',
-  'Babylon Genesis',
-  'Stacks',
-  'Mezo',
-  'Citrea',
-  'BOB',
-  'Merlin',
-  'Bitlayer',
-  'Botanix',
-  'RSK',
+  'BSquared', 'CORE', 'Babylon Genesis', 'Stacks', 'Mezo', 'Citrea', 'BOB', 'Merlin', 'Bitlayer', 'Botanix', 'RSK',
 ]);
-
 const COSMOS_IBC_CHAINS = new Set<string>([
-  'Noble',
-  'Nibiru',
-  'XION',
-  'Osmosis',
-  'Cosmos',
-  'Celestia',
-  'Injective',
-  'Kujira',
-  'Neutron',
-  'Stride',
-  'Secret',
-  'Akash',
-  'Dymension',
-  'Initia',
-  'Persistence',
-  'Stargaze',
-  'Archway',
-  'Saga',
-  'Terra',
-  'Terra2',
-  'dYdX',
-  'Thorchain',
-  'HydraDX',
+  'Noble', 'Nibiru', 'XION', 'Osmosis', 'Cosmos', 'Celestia', 'Injective', 'Kujira', 'Neutron', 'Stride',
+  'Secret', 'Akash', 'Dymension', 'Initia', 'Persistence', 'Stargaze', 'Archway', 'Saga', 'Terra', 'Terra2',
+  'dYdX', 'Thorchain', 'HydraDX',
 ]);
-
-const XRPL_STELLAR_CHAINS = new Set<string>(['Ripple', 'Stellar']);
-
 const ALT_VM_CHAINS = new Set<string>([
-  'Sui',
-  'Aptos',
-  'Starknet',
-  'Tron',
-  'Cardano',
-  'Near',
-  'Provenance',
-  'Qubic',
-  'Canton',
-  'TON',
-  'Polkadot',
-  'Astar',
-  'Flow',
-  'Fuel',
-  'ICP',
-  'Hedera',
-  'Tezos',
-  'Radix',
-  'Waves',
-  'Aleo',
-  'Mina',
-  'Elrond',
-  'VeChain',
-  'Kaspa',
-  'Ergo',
-  'Filecoin',
-  'Eclipse',
+  'Sui', 'Aptos', 'Starknet', 'Tron', 'Cardano', 'Near', 'Provenance', 'Qubic', 'Canton', 'TON',
+  'Polkadot', 'Astar', 'Flow', 'Fuel', 'ICP', 'Hedera', 'Tezos', 'Radix', 'Waves', 'Aleo', 'Mina',
+  'Elrond', 'VeChain', 'Kaspa', 'Ergo', 'Filecoin', 'Eclipse',
 ]);
 
 export function classifySingleChain(chain: string): ChainProfile {
   if (chain === 'Solana') {
     return {
-      family: 'solana',
-      familyLabel: 'Solana',
-      costOrder: 1,
-      wallet: 'Phantom or Backpack wallet',
-      gasAsset: 'SOL',
-      gasTier: '<$0.05/tx (SOL + ~0.002 SOL rent)',
-      setupGas: 'under $0.05 in SOL plus ~$0.30 refundable rent',
-      actionGas: 'under $0.02 per Solana tx',
-      minCap: 150,
+      family: 'solana', familyLabel: 'Solana', costOrder: 1,
+      wallet: 'Phantom or Backpack wallet', gasAsset: 'SOL', gasTier: '<$0.05/tx (SOL)',
+      setupFee: 0.55, weeklyFee: 0.02, exitFee: 0.05, minFloor: 1000, baseMins: 35, weeklyMins: 5,
       cadence: 'bi-weekly organic rebalance',
       cleanup: 'close empty SPL token accounts to reclaim SOL rent and revoke delegates',
     };
   }
   if (chain === 'Bitcoin') {
     return {
-      family: 'bitcoin',
-      familyLabel: 'Bitcoin & Lightning',
-      costOrder: 4,
-      wallet: 'non-custodial BTC / Lightning node wallet',
-      gasAsset: 'BTC',
-      gasTier: '$1–$8 L1 open/close (sats/vB)',
-      setupGas: '$1–$8 on-chain BTC fee (sats/vB)',
-      actionGas: 'routing sats only (zero EVM gas)',
-      minCap: 250,
+      family: 'bitcoin', familyLabel: 'Bitcoin & Lightning', costOrder: 4,
+      wallet: 'non-custodial BTC / Lightning node wallet', gasAsset: 'BTC', gasTier: '$5.50 L1 open/close',
+      setupFee: 5.50, weeklyFee: 0.0, exitFee: 5.50, minFloor: 2500, baseMins: 55, weeklyMins: 4,
       cadence: 'open-and-hold channel liquidity',
       cleanup: 'cooperatively close Lightning channels back to cold BTC storage',
     };
   }
   if (BTC_L2_CHAINS.has(chain)) {
     return {
-      family: 'btc_l2',
-      familyLabel: 'BTC L2 / Restaking',
-      costOrder: 3,
+      family: 'btc_l2', familyLabel: 'BTC L2 / Restaking', costOrder: 3,
       wallet: `${chain}-compatible BTC/EVM wallet`,
       gasAsset: chain === 'Stacks' ? 'STX' : chain === 'CORE' ? 'CORE' : 'BTC',
-      gasTier: '$0.20–$3.00/tx',
-      setupGas: '$0.30–$3.00 in native chain gas',
-      actionGas: '$0.20–$1.50 per action',
-      minCap: 200,
-      cadence: 'deposit-and-hold across unbonding epochs',
-      cleanup: 'verify 7–21 day bridge/unbonding cooldowns and revoke spend limits',
+      gasTier: '$0.35–$3.50/tx',
+      setupFee: 3.50, weeklyFee: 0.35, exitFee: 2.00, minFloor: 2000, baseMins: 45, weeklyMins: 5,
+      cadence: 'hold across unbonding epochs',
+      cleanup: 'check 7–21d unbonding cooldowns and revoke spend limits',
     };
   }
   if (chain === 'Bittensor') {
     return {
-      family: 'bittensor',
-      familyLabel: 'Bittensor (Substrate)',
-      costOrder: 2,
-      wallet: 'Bittensor Wallet or Polkadot.js Substrate signer',
-      gasAsset: 'TAO',
-      gasTier: '<$0.10/tx (TAO)',
-      setupGas: 'under $0.10 in native TAO',
-      actionGas: 'under $0.05 in TAO per subnet stake',
-      minCap: 150,
-      cadence: 'periodic subnet yield check (no churn)',
-      cleanup: 'unstake subnet alpha back to root TAO watching pool slippage',
+      family: 'bittensor', familyLabel: 'Bittensor (Substrate)', costOrder: 2,
+      wallet: 'Bittensor Wallet or Polkadot.js signer', gasAsset: 'TAO', gasTier: '<$0.10/tx (TAO)',
+      setupFee: 0.25, weeklyFee: 0.05, exitFee: 0.15, minFloor: 1500, baseMins: 45, weeklyMins: 4,
+      cadence: 'periodic subnet yield check',
+      cleanup: 'unstake subnet alpha back to root TAO watching slippage',
     };
   }
   if (chain === 'Algorand') {
     return {
-      family: 'algorand',
-      familyLabel: 'Algorand (AVM)',
-      costOrder: 1,
-      wallet: 'Pera or Defly Algorand wallet',
-      gasAsset: 'ALGO',
-      gasTier: '<$0.01/tx (0.001 ALGO)',
-      setupGas: '0.001 ALGO/tx plus 0.1 ALGO ASA opt-in reserve',
-      actionGas: '0.001 ALGO per transaction',
-      minCap: 100,
+      family: 'algorand', familyLabel: 'Algorand (AVM)', costOrder: 1,
+      wallet: 'Pera or Defly Algorand wallet', gasAsset: 'ALGO', gasTier: '<$0.02/tx (ALGO)',
+      setupFee: 0.25, weeklyFee: 0.01, exitFee: 0.05, minFloor: 1000, baseMins: 40, weeklyMins: 4,
       cadence: 'bi-weekly organic check-in',
-      cleanup: 'opt out of unused ASAs to reclaim 0.1 ALGO minimum balance locks',
+      cleanup: 'opt out of unused ASAs to reclaim 0.1 ALGO min balance',
     };
   }
   if (COSMOS_IBC_CHAINS.has(chain)) {
     return {
-      family: 'cosmos_ibc',
-      familyLabel: 'Cosmos / IBC',
-      costOrder: 1,
-      wallet: 'Keplr or Leap IBC wallet',
-      gasAsset: chain === 'Noble' ? 'native IBC fee token' : 'native chain gas token',
+      family: 'cosmos_ibc', familyLabel: 'Cosmos / IBC', costOrder: 1,
+      wallet: 'Keplr or Leap IBC wallet', gasAsset: chain === 'Noble' ? 'IBC fee token' : 'native IBC gas',
       gasTier: '<$0.05/tx (IBC)',
-      setupGas: 'under $0.05 in native IBC gas',
-      actionGas: 'under $0.03 per IBC tx',
-      minCap: 150,
-      cadence: 'bi-weekly organic position review',
-      cleanup: 'send assets back over canonical IBC channels (no token approvals to revoke)',
+      setupFee: 0.40, weeklyFee: 0.03, exitFee: 0.15, minFloor: 1000, baseMins: 40, weeklyMins: 4,
+      cadence: 'bi-weekly organic check-in',
+      cleanup: 'transfer balances back over canonical IBC channels',
     };
   }
-  if (XRPL_STELLAR_CHAINS.has(chain)) {
-    const isXrpl = chain === 'Ripple';
+  if (chain === 'Ripple' || chain === 'Stellar') {
+    const xr = chain === 'Ripple';
     return {
-      family: 'xrpl_stellar',
-      familyLabel: isXrpl ? 'XRPL' : 'Stellar',
-      costOrder: 2,
-      wallet: isXrpl ? 'Xaman (XRPL) wallet' : 'Freighter (Stellar) wallet',
-      gasAsset: isXrpl ? 'XRP' : 'XLM',
-      gasTier: isXrpl ? '<$0.02/tx + XRP reserve' : '<$0.02/tx + XLM reserve',
-      setupGas: isXrpl ? 'fractions of 1 XRP plus trustline reserve' : 'fractions of 1 XLM plus trustline reserve',
-      actionGas: 'under $0.02 per ledger operation',
-      minCap: 150,
-      cadence: 'deposit-and-hold across epochs',
-      cleanup: 'zero out issued balances and remove unused trustlines to free base reserve',
+      family: 'xrpl_stellar', familyLabel: xr ? 'XRPL' : 'Stellar', costOrder: 2,
+      wallet: xr ? 'Xaman (XRPL) wallet' : 'Freighter (Stellar) wallet',
+      gasAsset: xr ? 'XRP' : 'XLM', gasTier: `<$0.02/tx + ${xr ? 'XRP' : 'XLM'} reserve`,
+      setupFee: 0.35, weeklyFee: 0.02, exitFee: 0.10, minFloor: 1500, baseMins: 40, weeklyMins: 4,
+      cadence: 'epoch hold',
+      cleanup: 'zero issued balances and remove unused trustlines',
     };
   }
   if (ALT_VM_CHAINS.has(chain)) {
     return {
-      family: 'alt_vm',
-      familyLabel: `${chain} (Alt-VM)`,
-      costOrder: 2,
-      wallet: `${chain}-native wallet`,
-      gasAsset: `${chain} native gas`,
-      gasTier: '$0.02–$1.00/tx',
-      setupGas: '$0.05–$1.00 in native chain gas/energy',
-      actionGas: '$0.02–$0.50 per native call',
-      minCap: 150,
+      family: 'alt_vm', familyLabel: `${chain} (Alt-VM)`, costOrder: 2,
+      wallet: `${chain}-native wallet`, gasAsset: `${chain} gas`, gasTier: '$0.06–$0.80/tx',
+      setupFee: 0.80, weeklyFee: 0.06, exitFee: 0.25, minFloor: 1000, baseMins: 40, weeklyMins: 5,
       cadence: 'bi-weekly organic check-in',
-      cleanup: 'clear active session keys or contract permissions after unwinding',
+      cleanup: 'clear session keys or contract permissions on exit',
     };
   }
   if (chain === 'Ethereum') {
     return {
-      family: 'eth_l1',
-      familyLabel: 'Ethereum L1 Only',
-      costOrder: 9,
-      wallet: 'EVM wallet (Rabby or hardware signer)',
-      gasAsset: 'ETH',
-      gasTier: '$4–$15/tx (L1 gas)',
-      setupGas: '$8–$25 in ETH L1 gas (batch during <15 gwei)',
-      actionGas: 'no weekly churn; hold to keep gas < 2% of capital',
-      minCap: 500,
+      family: 'eth_l1', familyLabel: 'Ethereum L1 Only', costOrder: 9,
+      wallet: 'EVM wallet (Rabby or hardware signer)', gasAsset: 'ETH', gasTier: '$12–$18/tx (L1 gas)',
+      setupFee: 18.00, weeklyFee: 0.0, exitFee: 12.00, minFloor: 5000, baseMins: 45, weeklyMins: 3,
       cadence: 'deposit-and-hold (no weekly L1 churn)',
-      cleanup: 'execute exact-amount withdrawals and revoke ERC-20 allowances on exit',
+      cleanup: 'withdraw exact balance and revoke ERC-20 allowances',
     };
   }
   return {
-    family: 'evm_l2',
-    familyLabel: 'EVM L2 / Low-Gas Alt-L1',
-    costOrder: 0,
-    wallet: 'EVM wallet (Rabby or MetaMask)',
-    gasAsset: `${chain} native gas`,
-    gasTier: '$0.02–$0.25/tx',
-    setupGas: '$0.05–$0.50 in native L2/alt-L1 gas',
-    actionGas: 'under $0.25 per organic action',
-    minCap: 150,
+    family: 'evm_l2', familyLabel: 'EVM L2 / Low-Gas Alt-L1', costOrder: 0,
+    wallet: 'EVM wallet (Rabby or MetaMask)', gasAsset: `${chain} gas`, gasTier: '$0.08–$0.30/tx',
+    setupFee: 1.15, weeklyFee: 0.08, exitFee: 0.25, minFloor: 1000, baseMins: 40, weeklyMins: 5,
     cadence: 'bi-weekly organic rebalance',
-    cleanup: 'verify zero open debt and revoke unlimited ERC-20 token approvals on exit',
+    cleanup: 'repay any debt and revoke unlimited ERC-20 approvals',
   };
 }
 
-/** Select the lowest-cost deterministic execution chain across `chains`. */
 export function selectBestChain(chains: readonly string[]): { chain: string; profile: ChainProfile } {
-  if (chains.length === 0) {
-    return { chain: 'Ethereum', profile: classifySingleChain('Ethereum') };
-  }
+  if (chains.length === 0) return { chain: 'Ethereum', profile: classifySingleChain('Ethereum') };
   const ranked = chains.map((chain) => {
     const profile = classifySingleChain(chain);
-    const l2Bonus = LOW_GAS_EVM_ORDER.indexOf(chain);
-    const priority = l2Bonus >= 0 ? l2Bonus : 1000;
-    return { chain, profile, priority };
+    const l2Idx = LOW_GAS_EVM_ORDER.indexOf(chain);
+    return { chain, profile, p: l2Idx >= 0 ? l2Idx : 1000 };
   });
   ranked.sort(
     (a, b) =>
       a.profile.costOrder - b.profile.costOrder ||
-      a.priority - b.priority ||
+      a.p - b.p ||
       (a.chain < b.chain ? -1 : a.chain > b.chain ? 1 : 0),
   );
   return { chain: ranked[0]!.chain, profile: ranked[0]!.profile };
 }
 
-function sizeCapital(tvlUsd: number, profile: ChainProfile): number {
-  const base =
-    tvlUsd >= 1_000_000_000 ? 250 : tvlUsd >= 200_000_000 ? 200 : tvlUsd >= 50_000_000 ? 150 : 100;
-  return Math.max(profile.minCap, base);
+export function planDepositUsd(tvlUsd: number, minFloor: number): number {
+  const raw = Math.round((tvlUsd * 0.0002) / 500) * 500;
+  return Math.min(25_000, Math.max(minFloor, raw));
 }
 
-function holdDaysFor(ageDays: number | null, profile: ChainProfile): number {
-  if (profile.family === 'eth_l1') return 60;
-  if (ageDays === null) return 45;
-  if (ageDays < 180) return 60;
-  if (ageDays < 365) return 45;
-  return 30;
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 function coreActionText(p: SnapshotProtocol, chain: string, profile: ChainProfile, cap: number): string {
   const cat = (p.category ?? '').toLowerCase();
   const name = p.name;
-
   if (profile.family === 'bitcoin') {
-    return `Open a balanced native BTC Lightning channel or liquidity node peer with ${name} ($${cap}+ in BTC) instead of bridged wrappers.`;
+    return `Open a balanced native BTC Lightning channel with ${name} ($${cap.toLocaleString('en-US')} in BTC) rather than wrapped bridges.`;
   }
   if (profile.family === 'bittensor') {
-    return `Stake $${cap}+ of native TAO into ${name}'s dTAO subnet liquidity pool on Bittensor and monitor alpha exchange ratio.`;
+    return `Stake $${cap.toLocaleString('en-US')} of native TAO into ${name}'s dTAO subnet pool on Bittensor and track alpha ratio.`;
   }
   if (profile.family === 'algorand') {
-    if (cat.includes('rwa')) {
-      return `Complete issuer KYC/eligibility verification and acquire $${cap}+ of fractional RWA tokens on ${name} (${chain}) using ALGO/native ASA rails.`;
-    }
-    return `Opt into the protocol ASA and delegate or deposit $${cap}+ in native ALGO through ${name} on ${chain}.`;
+    return cat.includes('rwa')
+      ? `Complete KYC eligibility and acquire $${cap.toLocaleString('en-US')} of fractional RWA ASAs on ${name} (${chain}).`
+      : `Opt into the ASA and supply $${cap.toLocaleString('en-US')} of native ALGO into ${name} on ${chain}.`;
   }
   if (profile.family === 'cosmos_ibc') {
-    return `Transfer $${cap}+ via canonical IBC onto ${chain} and supply native Cosmos liquidity into ${name}'s core pool.`;
+    return `Transfer $${cap.toLocaleString('en-US')} via canonical IBC onto ${chain} and supply native Cosmos liquidity to ${name}.`;
   }
   if (profile.family === 'xrpl_stellar') {
     const asset = chain === 'Ripple' ? 'XRP' : 'XLM';
-    return `Set the required trustline on ${chain} and supply $${cap}+ of ${asset} or native ledger liquidity into ${name}.`;
+    return `Set the ${chain} trustline and supply $${cap.toLocaleString('en-US')} of ${asset} liquidity into ${name}.`;
   }
   if (cat.includes('insurance')) {
-    return `Supply $${cap}+ of capital to ${name}'s underwriting / cover pool on ${chain} (avoid buying cover unless hedging, as premiums are sunk costs).`;
+    return `Supply $${cap.toLocaleString('en-US')} to ${name}'s underwriting / cover pool on ${chain} (do not buy cover unless hedging: premiums are sunk).`;
   }
   if (cat.includes('curator') || cat.includes('allocator') || cat.includes('aggregator') || cat.includes('cdp manager') || cat.includes('indexes')) {
-    return `Deposit $${cap}+ into a ${name} curated vault on ${chain} receiving liquid vault shares; compare curator fee % and utilization.`;
+    return `Deposit $${cap.toLocaleString('en-US')} into a ${name} curated vault on ${chain} receiving liquid shares; verify curator fee % and liquidity.`;
   }
   if (cat.includes('lend') || cat.includes('cdp') || cat.includes('collateral')) {
-    return `Supply $${cap}+ of collateral to ${name} on ${chain}; optionally borrow conservatively (<40% LTV) only if positive net carry justifies risk.`;
+    return `Supply $${cap.toLocaleString('en-US')} of collateral to ${name} on ${chain}; optionally borrow <35% LTV only if carry is positive.`;
   }
   if (cat.includes('dex') || cat.includes('liquidity manager')) {
-    return `Provide $${cap}+ of balanced liquidity in a deep major pair on ${name} (${chain}) to earn organic swap fees without excessive narrow-range IL.`;
+    return `Provide $${cap.toLocaleString('en-US')} of deep major-pair liquidity on ${name} (${chain}) avoiding tight-range IL.`;
   }
   if (cat.includes('derivative') || cat.includes('prediction') || cat.includes('option') || cat.includes('otc') || cat.includes('synthetic')) {
-    return `Deposit $${cap}+ of margin on ${name} (${chain}) and place small hedged limit orders; keep turnover modest because fees/funding are sunk costs.`;
+    return `Post $${cap.toLocaleString('en-US')} margin on ${name} (${chain}) with small hedged limit orders (keep turnover low: fees are sunk).`;
   }
   if (cat.includes('basis') || cat.includes('yield') || cat.includes('farm') || cat.includes('governance') || cat === 'dor') {
-    return `Mint or stake $${cap}+ of ${name}'s yield-bearing or delta-neutral receipt position on ${chain} and track epoch accrual.`;
+    return `Mint or stake $${cap.toLocaleString('en-US')} of ${name}'s yield-bearing or delta-neutral receipt on ${chain} and hold across epochs.`;
   }
   if (cat.includes('rwa') || cat.includes('cedefi') || cat.includes('crypto card') || cat.includes('payments')) {
-    return `Verify KYC/accreditation eligibility first, then hold $${cap}+ in ${name}'s permitted yield or payment rail on ${chain}.`;
+    return `Pass issuer KYC/accreditation first, then hold $${cap.toLocaleString('en-US')} in ${name}'s permitted rail on ${chain}.`;
   }
-  if (cat.includes('restak') || cat.includes('staking') || cat.includes('chain') || cat.includes('privacy')) {
-    return `Delegate or stake $${cap}+ of native ${chain} assets through ${name} and track validator commission and unbonding terms.`;
-  }
-  return `Deploy $${cap}+ of native ${chain} assets into ${name}'s primary liquidity module on ${chain}.`;
+  return `Deposit $${cap.toLocaleString('en-US')} of native ${chain} assets into ${name}'s core pool on ${chain}.`;
 }
 
-function riskDisclosureText(p: SnapshotProtocol, profile: ChainProfile, flags: readonly string[], siblingSymbol: string | null): string {
+function riskText(p: SnapshotProtocol, flags: readonly string[], siblingSymbol: string | null): string {
   const cat = (p.category ?? '').toLowerCase();
   const parts: string[] = [];
+  if (cat.includes('insurance')) parts.push('Underwriting pool bears claim-payout slashing and lockup risk.');
+  else if (cat.includes('rwa') || cat.includes('cedefi') || cat.includes('crypto card')) parts.push('Off-chain custody, legal KYC gating, and issuer solvency apply.');
+  else if (cat.includes('derivative') || cat.includes('prediction') || cat.includes('option')) parts.push('Monitor funding, spread slippage, and liquidation buffers.');
+  else if (cat.includes('basis') || cat.includes('yield') || cat.includes('curator') || cat.includes('allocator')) parts.push('Verify curator strategy, basis inversion, and redemption queues.');
+  else parts.push('Monitor smart-contract audits, oracle feeds, and pool utilization.');
 
-  if (cat.includes('insurance')) {
-    parts.push('Underwriting capital faces claim-payout slashing and lockup queues.');
-  } else if (cat.includes('rwa') || cat.includes('cedefi') || cat.includes('crypto card')) {
-    parts.push('Assess off-chain issuer custody, legal/KYC gating, and counterparty solvency.');
-  } else if (cat.includes('derivative') || cat.includes('prediction') || cat.includes('option')) {
-    parts.push('Monitor funding rates, spread slippage, and liquidation buffers (fees are non-recoverable).');
-  } else if (cat.includes('basis') || cat.includes('yield') || cat.includes('curator') || cat.includes('allocator')) {
-    parts.push('Check curator strategy exposure, basis-hedge inversion, and withdrawal queue cooldowns.');
-  } else if (cat.includes('restak') || cat.includes('staking')) {
-    parts.push('Verify validator slashing conditions and 7–21 day unbonding periods.');
-  } else {
-    parts.push('Monitor smart-contract audit status, oracle dependencies, and pool utilization.');
-  }
-
-  if (siblingSymbol !== null) {
-    parts.push(`Note tokenized sibling ${siblingSymbol} already trades.`);
-  }
-  if (flags.some((f) => f.includes('Bitcoin P2P'))) {
-    parts.push('Bitcoin base P2P routing is utility infra unlikely to issue a token.');
-  }
-  if (flags.some((f) => f.includes('Missing listed_at'))) {
-    parts.push('DefiLlama lacks listed_at; verify domain history independently.');
-  }
+  if (siblingSymbol !== null) parts.push(`Sibling token ${siblingSymbol} already trades.`);
+  if (flags.some((f) => f.includes('Bitcoin P2P'))) parts.push('Bitcoin P2P routing rarely issues a token.');
   return parts.join(' ');
 }
 
-function formatStep(step: FarmStep): string {
-  let s = `${step.action} Cost: ${step.cost}. Time: ${step.time}.`;
-  if (s.length > 600) s = `${s.slice(0, 596)}...`;
-  if (s.length < 20) s = `${s} Verify official protocol documentation.`;
-  return s;
+function fmtStepFee(usd: number): string {
+  return usd === 0 ? 'free' : `$${usd.toFixed(2)}`;
 }
 
-export function buildFarmPlan(
+function formatStepLine(s: FarmStepItem): string {
+  let line = `${s.phase}: ${s.action} Cost: ${s.cost_label}. Time: ${s.time_label}.`;
+  if (line.length > 600) line = `${line.slice(0, 596)}...`;
+  if (line.length < 20) line = `${line} Verify official docs.`;
+  return line;
+}
+
+export interface FarmPlanResult {
+  econ: FarmEconomics;
+  steps: string[];
+  items: FarmStepItem[];
+}
+
+export function buildFarmEconomicsAndPlan(
   p: SnapshotProtocol,
-  ageDays: number | null,
+  impliedValueUsd: number,
+  launchOdds: number,
   flags: readonly string[],
   siblingSymbol: string | null,
-): { meta: FarmMeta; steps: string[]; structured: FarmStep[] } {
+  p05DropPct: number,
+  depositOverride?: number,
+  dropShare = 0.07,
+  horizonWeeks = 12,
+): FarmPlanResult {
   const { chain, profile } = selectBestChain(p.chains);
-  const capital = sizeCapital(p.tvl_usd, profile);
-  const holdDays = holdDaysFor(ageDays, profile);
-  const multiChainNote =
+  const deposit = depositOverride ?? planDepositUsd(p.tvl_usd, profile.minFloor);
+  const cat = (p.category ?? '').toLowerCase();
+
+  const setupFee = round2(profile.setupFee);
+  const weeklyOpsCost = round2(profile.weeklyFee * horizonWeeks);
+  const exitFee = round2(profile.exitFee);
+  const totalFees = round2(setupFee + weeklyOpsCost + exitFee);
+
+  const weeklyTotalMins = profile.weeklyMins * horizonWeeks;
+  const totalMins = profile.baseMins + weeklyTotalMins;
+  const totalHours = round2(totalMins / 60);
+
+  const modelledDrop = round2(impliedValueUsd * dropShare * (deposit / (p.tvl_usd + deposit)));
+  const netOfFees = round2(modelledDrop - totalFees);
+  const tbillHurdle = round2(deposit * 0.04 * (horizonWeeks / 52));
+  const netPerHour = round2(netOfFees / Math.max(0.25, totalHours));
+
+  let verdict: FarmVerdict = 'SKIP';
+  if (netOfFees > tbillHurdle && netPerHour >= 20) verdict = 'FARM';
+  else if (netOfFees > 0) verdict = 'MARGINAL';
+
+  const shareDenom = impliedValueUsd * (deposit / (p.tvl_usd + deposit));
+  const breakEvenDrop = shareDenom > 0 ? round2((totalFees / shareDenom) * 10000) / 10000 : 1;
+  const breakEvenOdds =
+    impliedValueUsd > 0 && launchOdds > 0
+      ? Math.round(Math.min(1, totalFees / ((impliedValueUsd / launchOdds) * dropShare * (deposit / (p.tvl_usd + deposit)))) * 1000) / 1000
+      : 1;
+
+  const exitDropFraction = clamp(Math.abs(p05DropPct) / 100, 0.12, 0.25);
+  const exitTvlUsd = Math.round(p.tvl_usd * (1 - exitDropFraction));
+  const exitTvlM = `$${(exitTvlUsd / 1e6).toFixed(1)}M`;
+
+  const multiNote =
     p.chains.length > 1 && p.chains.includes('Ethereum') && profile.family !== 'eth_l1'
-      ? ` Auto-routed to ${chain} (lowest-gas among ${p.chains.length} chains); watch bridge risk if transferring from Ethereum.`
+      ? ` Auto-routed to ${chain} (lowest gas across ${p.chains.length} chains).`
       : '';
 
   const epistemicTier = flags.some((f) => f.includes('Bitcoin P2P') || f.includes('Tokenized Sibling'))
@@ -429,61 +296,109 @@ export function buildFarmPlan(
     : 'Potential Pre-Token Participation (Unconfirmed)';
 
   const riskTags: string[] = [];
-  const cat = (p.category ?? '').toLowerCase();
   if (profile.family === 'eth_l1') riskTags.push('High L1 Gas');
   if (cat.includes('insurance')) riskTags.push('Underwriting Slashing');
   if (cat.includes('cedefi') || cat.includes('rwa') || cat.includes('crypto card')) riskTags.push('Custody / KYC');
   if (cat.includes('derivative') || cat.includes('prediction') || cat.includes('option')) riskTags.push('Sunk Trading Fees');
-  if (cat.includes('restak') || cat.includes('staking')) riskTags.push('Unbonding Queue');
   if (siblingSymbol !== null) riskTags.push(`Sibling ${siblingSymbol}`);
   if (riskTags.length === 0) riskTags.push('Smart-Contract Risk');
 
-  const structured: FarmStep[] = [
+  const coreMins = Math.max(5, profile.baseMins - 30);
+  const items: FarmStepItem[] = [
     {
-      action: `Prepare a dedicated ${profile.wallet} on ${chain} and verify ${p.name}'s official domain and docs (no airdrop is confirmed).`,
-      cost: profile.setupGas,
-      time: '10 minutes',
+      phase: 'SETUP',
+      action: `Prepare a dedicated ${profile.wallet} on ${chain} funded with ${profile.gasAsset} fee buffer (no airdrop is confirmed).`,
+      cost_usd: round2(setupFee * 0.35),
+      cost_label: `${fmtStepFee(round2(setupFee * 0.35))} gas`,
+      minutes: 8,
+      time_label: '8m',
     },
     {
-      action: `Fund at least $${capital} in native ${chain} assets with a small ${profile.gasAsset} fee buffer.${multiChainNote}`,
-      cost: `$${capital}+ principal + ${profile.setupGas}`,
-      time: '10 minutes',
+      phase: 'VERIFY',
+      action: `Verify ${p.name}'s official domain and contract docs; never sign approvals from third-party links.`,
+      cost_usd: 0,
+      cost_label: 'free',
+      minutes: 5,
+      time_label: '5m',
     },
     {
-      action: coreActionText(p, chain, profile, capital),
-      cost: `$${capital} deployed + ${profile.setupGas}`,
-      time: '15 minutes',
+      phase: 'FUND',
+      action: `Bridge or withdraw $${deposit.toLocaleString('en-US')} in native ${chain} assets.${multiNote}`,
+      cost_usd: round2(setupFee * 0.65),
+      cost_label: `${fmtStepFee(round2(setupFee * 0.65))} transfer`,
+      minutes: 7,
+      time_label: '7m',
     },
     {
-      action: `Hold across ${holdDays} days with ${profile.cadence}; avoid pointless micro-churn that destroys net yield.`,
-      cost: profile.actionGas,
-      time: `${holdDays} days`,
+      phase: 'CORE',
+      action: coreActionText(p, chain, profile, deposit),
+      cost_usd: 0,
+      cost_label: `$${deposit.toLocaleString('en-US')} at risk`,
+      minutes: coreMins,
+      time_label: `${coreMins}m`,
     },
     {
-      action: riskDisclosureText(p, profile, flags, siblingSymbol),
-      cost: 'zero extra fee for monitoring',
-      time: '5 minutes weekly',
+      phase: 'CADENCE',
+      action: `Maintain position for ${horizonWeeks} weeks with ${profile.cadence} (avoid wasteful micro-churn).`,
+      cost_usd: weeklyOpsCost,
+      cost_label: `${fmtStepFee(weeklyOpsCost)} over ${horizonWeeks}wk`,
+      minutes: weeklyTotalMins,
+      time_label: `${profile.weeklyMins}m/wk (${weeklyTotalMins}m)`,
     },
     {
-      action: `Before exiting, check withdrawal queues, ${profile.cleanup}, and log tx hashes (verify any points page only via official channels).`,
-      cost: profile.family === 'eth_l1' ? '$4–$12 L1 exit gas' : profile.actionGas,
-      time: '10 minutes',
+      phase: 'RISK',
+      action: riskText(p, flags, siblingSymbol),
+      cost_usd: 0,
+      cost_label: 'free check',
+      minutes: 2,
+      time_label: '2m',
+    },
+    {
+      phase: 'EXIT RULE',
+      action: `Exit early if protocol TVL drops below ${exitTvlM} (${p05DropPct.toFixed(1)}% weekly P05 stress threshold) or withdrawals pause; ${profile.cleanup}.`,
+      cost_usd: exitFee,
+      cost_label: `${fmtStepFee(exitFee)} unwind`,
+      minutes: 5,
+      time_label: '5m',
+    },
+    {
+      phase: 'LOG',
+      action: `Record wallet, tx hashes, and net $${netOfFees.toFixed(2)} (${verdict}) vs $${tbillHurdle.toFixed(2)} 4% T-bill benchmark; claim only via official domain.`,
+      cost_usd: 0,
+      cost_label: 'free log',
+      minutes: 3,
+      time_label: '3m',
     },
   ];
 
   return {
-    meta: {
+    econ: {
       best_chain: chain,
       chain_family: profile.family,
       family_label: profile.familyLabel,
       gas_tier: profile.gasTier,
-      min_capital_usd: capital,
-      hold_days: holdDays,
+      deposit_usd: deposit,
+      drop_share: dropShare,
+      horizon_weeks: horizonWeeks,
+      setup_fee_usd: setupFee,
+      weekly_fee_usd: weeklyOpsCost,
+      exit_fee_usd: exitFee,
+      total_fees_usd: totalFees,
+      total_minutes: totalMins,
+      total_hours: totalHours,
+      modelled_drop_usd: modelledDrop,
+      net_of_fees_usd: netOfFees,
+      tbill_hurdle_usd: tbillHurdle,
+      net_per_hour: netPerHour,
+      verdict,
+      break_even_drop_share: breakEvenDrop,
+      break_even_odds: breakEvenOdds,
+      exit_tvl_usd: exitTvlUsd,
       cadence: profile.cadence,
       risk_tags: riskTags,
       epistemic_tier: epistemicTier,
     },
-    steps: structured.map(formatStep),
-    structured,
+    steps: items.map(formatStepLine),
+    items,
   };
 }

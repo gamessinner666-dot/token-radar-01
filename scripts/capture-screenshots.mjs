@@ -31,8 +31,8 @@ for (const file of ['index.html', 'app.css', 'app.js']) {
 const baseUrl = pathToFileURL(join(dashOut, 'index.html')).href;
 const targets = [
   { name: '1-board.png', hash: '' },
-  { name: '2-detail.png', hash: '#p=steakhouse-financial' },
-  { name: '3-filtered.png', hash: '#tier=large-cap' },
+  { name: '2-detail.png', hash: '#p=drakewell' },
+  { name: '3-filtered.png', hash: '#verdict=FARM&sort=netHr&dir=desc' },
 ];
 
 function readPngDimensions(filePath) {
