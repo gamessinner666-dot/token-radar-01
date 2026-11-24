@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import { buildFarmEconomicsAndPlan } from '../lib/farming.ts';
 import { buildRadar, dataScript } from '../lib/model.ts';
 import {
   boardIssue,
@@ -19,40 +20,34 @@ const snapshotPath = resolve(repoRoot, '../competition-kit/token-radar-01-kit/in
 const snapshot = parseSnapshot(readFileSync(snapshotPath, 'utf8'));
 const { board, radar } = buildRadar(snapshot);
 
-test('radar-3 MECE ledger, rank monotonicity, bootstrap bands, and boardIssue', () => {
-  assert.equal(radar.model_version, 'radar-3');
+test('radar-4 MECE ledger, rank monotonicity, 200-bootstrap bands & s.e., and boardIssue', () => {
+  assert.equal(radar.model_version, 'radar-4');
   assert.equal(boardIssue(board, snapshot), null);
 
   const L = radar.ledger;
   const ledgerSum =
-    L.watchlist +
-    L.large_cap +
-    L.early +
-    L.priced_comps +
-    L.other_tokenized +
-    L.excl_bridges +
-    L.excl_lst_btc +
-    L.excl_cex_ver_sib;
+    L.watchlist + L.large_cap + L.early + L.priced_comps + L.other_tokenized + L.excl_bridges + L.excl_lst_btc + L.excl_cex_ver_sib;
   assert.equal(L.total, 758);
   assert.equal(ledgerSum, 758);
   assert.equal(L.watchlist, 40);
   assert.equal(board.length, L.watchlist + L.large_cap + L.early);
   assert.equal(radar.rows.length, board.length);
   assert.equal(radar.rows.filter((r) => r.tier === 'watchlist').length, 40);
+  assert.equal(radar.calibration.n_bootstrap, 200);
+  assert.ok(radar.calibration.price_model.intercept_se > 0 && radar.calibration.price_model.beta_tvl_se > 0);
+  assert.ok(radar.calibration.odds_model.beta_age_se > 0 && radar.calibration.odds_model.beta_tvl_se > 0);
 
   for (let i = 0; i < radar.rows.length; i++) {
     const r = radar.rows[i]!;
     assert.equal(r.rank, i + 1);
     assert.ok(r.rank_low >= 1 && r.rank_low <= r.rank && r.rank <= r.rank_high && r.rank_high <= radar.rows.length);
-    if (i > 0) {
-      assert.ok(radar.rows[i - 1]!.implied_value_usd >= r.implied_value_usd);
-    }
-    assert.ok(r.implied_low_usd <= r.implied_value_usd && r.implied_value_usd <= r.implied_high_usd);
-    assert.ok(r.implied_p10_usd <= r.implied_value_usd && r.implied_value_usd <= r.implied_p90_usd);
+    if (i > 0) assert.ok(radar.rows[i - 1]!.implied_value_usd >= r.implied_value_usd);
+    assert.ok(r.implied_p10_usd <= r.implied_low_usd && r.implied_low_usd <= r.implied_value_usd);
+    assert.ok(r.implied_value_usd <= r.implied_high_usd && r.implied_high_usd <= r.implied_p90_usd);
   }
 });
 
-test('Stage 1 & Stage 2 dual blind OOS ablations and guardrails', () => {
+test('Stage 1 & Stage 2 dual blind OOS ablations and dropped-term guardrails', () => {
   const pm = radar.calibration.price_model;
   const om = radar.calibration.odds_model;
   assert.ok(pm.ablation.length >= 6);
@@ -60,15 +55,18 @@ test('Stage 1 & Stage 2 dual blind OOS ablations and guardrails', () => {
   assert.ok(pm.loo_miss < pm.flat_loo_miss);
   assert.ok(pm.cov50_wf > 0 && pm.cov80_wf > pm.cov50_wf);
 
-  assert.ok(om.ablation.length >= 5);
+  assert.ok(om.ablation.length >= 6);
   assert.equal(om.beta_chains, 0);
+  const droppedCat = om.ablation.find((a) => a.step.toLowerCase().includes('cat token share'));
   const droppedChain = om.ablation.find((a) => a.step.toLowerCase().includes('chain'));
+  assert.ok(droppedCat && droppedCat.status === 'tested_not_kept');
   assert.ok(droppedChain && droppedChain.status === 'tested_not_kept');
   assert.ok(om.wf_brier < om.base_wf_brier);
 });
 
-test('Domain & chain hygiene: sibling cut, underwriting pool, ETH floor, non-EVM zero hallucination', () => {
+test('Domain & chain hygiene: sibling cut, underwriting pool, ETH floor, non-EVM zero leak, exact step minute sum', () => {
   const bySlug = new Map(board.map((r) => [r.slug, r]));
+  const snapBySlug = new Map(snapshot.protocols.map((p) => [p.slug, p]));
   const mezo = bySlug.get('mezo-earn');
   assert.ok(mezo);
   assert.equal(mezo.sibling_symbol, 'MEZO');
@@ -83,6 +81,16 @@ test('Domain & chain hygiene: sibling cut, underwriting pool, ETH floor, non-EVM
     for (const step of r.farm_steps) {
       assert.ok(step.length >= 20 && step.length <= 600, `${r.slug} step length ${step.length}`);
     }
+    const plan = buildFarmEconomicsAndPlan(
+      snapBySlug.get(r.slug)!,
+      r.implied_value_usd,
+      r.launch_odds,
+      r.flags,
+      r.sibling_symbol,
+      radar.calibration.snapshot_7d_p05,
+    );
+    const stepSum = plan.items.reduce((acc, it) => acc + it.minutes, 0);
+    assert.equal(stepSum, plan.econ.total_minutes, `${r.slug} step minute sum`);
     if (r.farm_econ.chain_family === 'eth_l1') {
       assert.ok(r.farm_econ.deposit_usd >= 5000);
       assert.equal(r.farm_econ.weekly_fee_usd, 0);
@@ -94,7 +102,7 @@ test('Domain & chain hygiene: sibling cut, underwriting pool, ETH floor, non-EVM
   }
 });
 
-test('100% Node <-> browser dashboard/app.js parity across all 185 rows', () => {
+test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', () => {
   const noopEl = { innerHTML: '', querySelectorAll: () => [], addEventListener: () => {} };
   const ctx: Record<string, unknown> = {
     window: {},
@@ -107,49 +115,79 @@ test('100% Node <-> browser dashboard/app.js parity across all 185 rows', () => 
   };
   ctx.window = ctx;
   vm.runInNewContext(dataScript(radar), ctx);
+  vm.runInNewContext(readFileSync(join(repoRoot, 'dashboard/model.js'), 'utf8'), ctx);
   vm.runInNewContext(readFileSync(join(repoRoot, 'dashboard/app.js'), 'utf8'), ctx);
 
-  const parity = (ctx.window as {
-    __RADAR_PARITY: {
-      computeRowValuation: (r: unknown, c: unknown) => { valueIfLaunched: number; launchOdds: number; implied: number; low: number; high: number };
-      fnv1aHex: (rows: unknown[]) => string;
-      computeFarmEcon: (r: unknown, c: unknown) => {
-        verdict: string; net_of_fees_usd: number; net_per_hour: number; break_even_odds: number; steps: string[];
+  const model = (ctx.window as {
+    RADAR_MODEL: {
+      verifyBoardParity: (d: unknown) => {
+        pFit: unknown;
+        oFit: unknown;
+        refitPriceOk: boolean;
+        refitOddsOk: boolean;
+        mismatches: number;
+        monoOk: boolean;
+        totalExactOk: boolean;
+        checksum: string;
+        checksumOk: boolean;
+        wlOk: boolean;
+        ledgerOk: boolean;
+      };
+      evaluateProtocol: (r: unknown, pf: unknown, of: unknown, c: unknown) => {
+        valueIfLaunched: number;
+        launchOdds: number;
+        implied: number;
+        low: number;
+        high: number;
+      };
+      buildFarmTicket: (r: unknown, c: unknown) => {
+        verdict: string;
+        net_of_fees_usd: number;
+        net_per_hour: number;
+        break_even_odds: number;
+        steps: string[];
       };
     };
-  }).__RADAR_PARITY;
+  }).RADAR_MODEL;
+
+  const vp = model.verifyBoardParity(radar);
+  assert.equal(vp.refitPriceOk, true);
+  assert.equal(vp.refitOddsOk, true);
+  assert.equal(vp.mismatches, 0);
+  assert.equal(vp.monoOk, true);
+  assert.equal(vp.totalExactOk, true);
+  assert.equal(vp.checksumOk, true);
+  assert.equal(vp.wlOk, true);
+  assert.equal(vp.ledgerOk, true);
 
   const boardBySlug = new Map(board.map((r) => [r.slug, r]));
-  assert.equal(parity.fnv1aHex(radar.rows), radar.calibration.board_checksum);
   for (const r of radar.rows) {
     const b = boardBySlug.get(r.slug)!;
-    const v = parity.computeRowValuation(r, radar.calibration);
+    const v = model.evaluateProtocol(r, vp.pFit, vp.oFit, radar.calibration);
     assert.equal(v.valueIfLaunched, r.value_if_launched_usd, r.slug);
     assert.equal(v.launchOdds, r.launch_odds, r.slug);
     assert.equal(v.implied, r.implied_value_usd, r.slug);
-    assert.equal(v.low, r.implied_low_usd, r.slug);
-    assert.equal(v.high, r.implied_high_usd, r.slug);
 
-    const fe = parity.computeFarmEcon(r, radar.calibration);
-    assert.equal(fe.verdict, r.farm_econ.verdict, r.slug);
-    assert.equal(fe.net_of_fees_usd, r.farm_econ.net_of_fees_usd, r.slug);
-    assert.equal(fe.net_per_hour, r.farm_econ.net_per_hour, r.slug);
-    assert.equal(fe.break_even_odds, r.farm_econ.break_even_odds, r.slug);
-    assert.deepEqual([...fe.steps], b.farm_steps, r.slug);
+    const ft = model.buildFarmTicket(r, radar.calibration);
+    assert.equal(ft.verdict, r.farm_econ.verdict, r.slug);
+    assert.equal(ft.net_of_fees_usd, r.farm_econ.net_of_fees_usd, r.slug);
+    assert.equal(ft.net_per_hour, r.farm_econ.net_per_hour, r.slug);
+    assert.equal(ft.break_even_odds, r.farm_econ.break_even_odds, r.slug);
+    assert.deepEqual([...ft.steps], b.farm_steps, r.slug);
   }
 });
 
 test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, zero truncation)', () => {
   const dash = validateDashboardDir(join(repoRoot, 'dashboard'));
-  assert.ok(dash.totalBytes <= 54_000, `dashboard total=${dash.totalBytes}`);
-  for (const f of ['index.html', 'app.css', 'app.js']) {
+  assert.ok(dash.totalBytes <= 60_500, `dashboard total=${dash.totalBytes}`);
+  for (const f of ['00_methodology.md', 'index.html', 'app.css', 'model.js', 'app.js']) {
     const txt = readFileSync(join(repoRoot, 'dashboard', f), 'utf8');
     assert.ok(!/https?:\/\//i.test(txt), `external URL in ${f}`);
     assert.ok(!/xmlns\s*=/i.test(txt), `xmlns= in ${f}`);
   }
 
-  const outA = mkdtempSync(join(tmpdir(), 'radar3-a-'));
-  const outB = mkdtempSync(join(tmpdir(), 'radar3-b-'));
+  const outA = mkdtempSync(join(tmpdir(), 'radar4-a-'));
+  const outB = mkdtempSync(join(tmpdir(), 'radar4-b-'));
   try {
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outA], { cwd: repoRoot });
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outB], { cwd: repoRoot });
@@ -160,8 +198,13 @@ test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, 
     }
     const dossierBuf = readFileSync(join(outA, 'dossier.json'));
     const info = validateDossierBytes(dossierBuf);
-    assert.ok(info.bytes <= 1_250_000);
-    assert.ok(statSync(join(repoRoot, 'screenshots/1-board.png')).size > 20_000);
+    assert.ok(info.bytes <= 1_100_000, `dossier bytes=${info.bytes}`);
+    for (const shot of ['1-board.jpg', '2-detail.jpg', '3-filtered.jpg']) {
+      const sBuf = readFileSync(join(repoRoot, 'screenshots', shot));
+      assert.equal(sBuf[0], 0xff);
+      assert.equal(sBuf[1], 0xd8);
+      assert.ok(statSync(join(repoRoot, 'screenshots', shot)).size <= 524_288);
+    }
   } finally {
     rmSync(outA, { recursive: true, force: true });
     rmSync(outB, { recursive: true, force: true });

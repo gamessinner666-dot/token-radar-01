@@ -82,9 +82,13 @@ export interface OddsAblationRow {
 export interface PriceModelParams {
   ref_tvl_usd: number;
   intercept: number;
+  intercept_se: number;
   beta_tvl: number;
+  beta_tvl_se: number;
   cat_ridge_k: number;
   cat_adj: Record<string, number>;
+  cat_adj_min: number;
+  cat_adj_max: number;
   q25_log: number;
   q75_log: number;
   q10_log: number;
@@ -107,8 +111,11 @@ export interface PriceModelParams {
 export interface OddsModelParams {
   intercept: number;
   beta_age: number;
+  beta_age_se: number;
   beta_tvl: number;
+  beta_tvl_se: number;
   beta_g7d: number;
+  beta_g7d_se: number;
   beta_chains: number;
   median_age_years: number;
   max_age_years: number;
@@ -126,7 +133,7 @@ export interface OddsModelParams {
 }
 
 export interface ModelCalibration {
-  model_version: 'radar-3';
+  model_version: 'radar-4';
   price_model: PriceModelParams;
   odds_model: OddsModelParams;
   snapshot_7d_p05: number;
@@ -276,14 +283,31 @@ export interface RadarSummary {
   distinct_chains: number;
 }
 
+export interface RawCompPoint {
+  slug: string;
+  category: string;
+  tvl_usd: number;
+  mcap_usd: number;
+}
+
+export interface RawPeerPoint {
+  slug: string;
+  tvl_usd: number;
+  change_7d: number | null;
+  age_days: number | null;
+  y: 0 | 1;
+}
+
 export interface RadarData {
   as_of: string;
   source: string;
   floor_usd: number;
-  model_version: 'radar-3';
+  model_version: 'radar-4';
   ledger: LedgerBuckets;
   calibration: ModelCalibration;
   summary: RadarSummary;
   rows: RadarRow[];
   live_comparables: ComparableEntity[];
+  raw_comps: RawCompPoint[];
+  raw_peers: RawPeerPoint[];
 }

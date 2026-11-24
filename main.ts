@@ -1,6 +1,6 @@
 // Token Radar 01 (radar-3) entrypoint — Node 22.18+ erasable TypeScript, stdlib only, zero network.
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildRadar, dataScript } from './lib/model.ts';
@@ -69,10 +69,12 @@ writeFileSync(join(outDir, 'board.json'), `${JSON.stringify({ rows: board })}\n`
 writeFileSync(join(outDir, 'data.js'), dataScript(radar), 'utf8');
 
 const dashOut = join(outDir, 'dashboard');
+rmSync(dashOut, { recursive: true, force: true });
 const dashFiles = copyDirRecursive(join(here, 'dashboard'), dashOut);
 const dashCheck = validateDashboardDir(dashOut);
 
 const shotsOut = join(outDir, 'screenshots');
+rmSync(shotsOut, { recursive: true, force: true });
 const shotFiles = copyDirRecursive(join(here, 'screenshots'), shotsOut);
 if (shotFiles.length < 3) {
   process.stderr.write(`token radar: screenshots/ has ${shotFiles.length} image(s); 3–4 required\n`);

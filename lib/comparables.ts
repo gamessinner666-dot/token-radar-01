@@ -352,6 +352,7 @@ export function fitAndPredictPrice(
 
 export interface StandalonePeer {
   slug: string;
+  category?: string;
   y: number;
   sector: SectorName;
   age_years: number | null;
@@ -366,6 +367,7 @@ export interface StandalonePeer {
 export interface OddsEvalOpts {
   useAge?: boolean;
   useSector?: boolean;
+  useCatShare?: boolean;
   useTvl?: boolean;
   useG7d?: boolean;
   useChains?: boolean;
@@ -379,9 +381,28 @@ export function fitLogisticOdds(
   train: readonly StandalonePeer[],
   opts: OddsEvalOpts,
 ): { coef: number[]; predict: (p: StandalonePeer) => number } {
+  const baseR = clamp(train.filter((r) => r.y === 1).length / Math.max(1, train.length), 0.05, 0.95);
+  const catCounts = new Map<string, { n: number; y: number }>();
+  if (opts.useCatShare) {
+    for (const r of train) {
+      const k = r.category ?? 'Uncategorized';
+      const cur = catCounts.get(k) ?? { n: 0, y: 0 };
+      cur.n += 1;
+      cur.y += r.y;
+      catCounts.set(k, cur);
+    }
+  }
+  const catLogit = (cat: string | undefined): number => {
+    const s = catCounts.get(cat ?? 'Uncategorized') ?? { n: 0, y: 0 };
+    const m = 8;
+    const p = clamp((s.y + m * baseR) / (s.n + m), 0.05, 0.95);
+    return Math.log(p / (1 - p)) - Math.log(baseR / (1 - baseR));
+  };
+
   const feat = (p: StandalonePeer): number[] => {
     const v = [1];
     if (opts.useAge) v.push(Math.log(p.age_filled + 0.15));
+    if (opts.useCatShare) v.push(catLogit(p.category));
     if (opts.useSector) {
       for (let s = 0; s < 5; s++) v.push(p.sector === SECTORS[s] ? 1 : 0);
     }

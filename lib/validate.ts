@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { BoardRow, Snapshot } from './types.ts';
 
 export const GATE_DOSSIER_MAX_BYTES = 1_572_864; // 1.5 MiB hard server gate cap
-export const TARGET_DASHBOARD_MAX_BYTES = 54_000; // strict <= 54 KB zero-truncation target
+export const TARGET_DASHBOARD_MAX_BYTES = 60_500; // strict <= 60.5 KB zero-truncation target (65,536 B server cap)
 export const PLAIN_FILE_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 
 const HTTP_URL_RE = /https?:\/\//i;

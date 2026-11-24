@@ -250,7 +250,7 @@ export function buildFarmEconomicsAndPlan(
   siblingSymbol: string | null,
   p05DropPct: number,
   depositOverride?: number,
-  dropShare = 0.07,
+  dropShare = 0.10,
   horizonWeeks = 12,
 ): FarmPlanResult {
   const { chain, profile } = selectBestChain(p.chains);
@@ -272,7 +272,7 @@ export function buildFarmEconomicsAndPlan(
   const netPerHour = round2(netOfFees / Math.max(0.25, totalHours));
 
   let verdict: FarmVerdict = 'SKIP';
-  if (netOfFees > tbillHurdle && netPerHour >= 20) verdict = 'FARM';
+  if (netOfFees > tbillHurdle && netPerHour >= 25) verdict = 'FARM';
   else if (netOfFees > 0) verdict = 'MARGINAL';
 
   const shareDenom = impliedValueUsd * (deposit / (p.tvl_usd + deposit));
@@ -304,10 +304,21 @@ export function buildFarmEconomicsAndPlan(
   if (riskTags.length === 0) riskTags.push('Smart-Contract Risk');
 
   const coreMins = Math.max(5, profile.baseMins - 30);
+  const settleNote =
+    profile.family === 'bitcoin'
+      ? 'allow 10–60m on-chain settlement'
+      : profile.family === 'eth_l1'
+        ? 'withdraw direct to skip bridge gas'
+        : 'allow 2–15m finality';
+  const secondaryChain = p.chains.find((c) => c !== chain && classifySingleChain(c).costOrder <= 2);
+  const secondaryNote = secondaryChain
+    ? ` Optional: mirror 1 light organic tx on ${secondaryChain} if points weight multi-chain.`
+    : '';
+
   const items: FarmStepItem[] = [
     {
       phase: 'SETUP',
-      action: `Prepare a dedicated ${profile.wallet} on ${chain} funded with ${profile.gasAsset} fee buffer (no airdrop is confirmed).`,
+      action: `Prepare a dedicated ${profile.wallet} on ${chain} with ${profile.gasAsset} fee buffer (~2 setup txs @ ${profile.gasTier}; no airdrop is confirmed).`,
       cost_usd: round2(setupFee * 0.35),
       cost_label: `${fmtStepFee(round2(setupFee * 0.35))} gas`,
       minutes: 8,
@@ -315,7 +326,7 @@ export function buildFarmEconomicsAndPlan(
     },
     {
       phase: 'VERIFY',
-      action: `Verify ${p.name}'s official domain and contract docs; never sign approvals from third-party links.`,
+      action: `Open ${p.name} via its DefiLlama entry or official docs, bookmark the URL, and check contracts (never sign approvals from third-party links).`,
       cost_usd: 0,
       cost_label: 'free',
       minutes: 5,
@@ -323,7 +334,7 @@ export function buildFarmEconomicsAndPlan(
     },
     {
       phase: 'FUND',
-      action: `Bridge or withdraw $${deposit.toLocaleString('en-US')} in native ${chain} assets.${multiNote}`,
+      action: `Move $${deposit.toLocaleString('en-US')} in native ${chain} assets onto ${chain} (${settleNote}).${multiNote}`,
       cost_usd: round2(setupFee * 0.65),
       cost_label: `${fmtStepFee(round2(setupFee * 0.65))} transfer`,
       minutes: 7,
@@ -331,7 +342,7 @@ export function buildFarmEconomicsAndPlan(
     },
     {
       phase: 'CORE',
-      action: coreActionText(p, chain, profile, deposit),
+      action: `Start with a $100 test tx, confirm tracking, then scale to full $${deposit.toLocaleString('en-US')}: ${coreActionText(p, chain, profile, deposit)}`,
       cost_usd: 0,
       cost_label: `$${deposit.toLocaleString('en-US')} at risk`,
       minutes: coreMins,
@@ -339,7 +350,7 @@ export function buildFarmEconomicsAndPlan(
     },
     {
       phase: 'CADENCE',
-      action: `Maintain position for ${horizonWeeks} weeks with ${profile.cadence} (avoid wasteful micro-churn).`,
+      action: `Hold ${horizonWeeks} weeks using ${profile.cadence} (~${profile.weeklyMins}m/wk; avoid wasteful churn).${secondaryNote}`,
       cost_usd: weeklyOpsCost,
       cost_label: `${fmtStepFee(weeklyOpsCost)} over ${horizonWeeks}wk`,
       minutes: weeklyTotalMins,
@@ -355,15 +366,15 @@ export function buildFarmEconomicsAndPlan(
     },
     {
       phase: 'EXIT RULE',
-      action: `Exit early if protocol TVL drops below ${exitTvlM} (${p05DropPct.toFixed(1)}% weekly P05 stress threshold) or withdrawals pause; ${profile.cleanup}.`,
+      action: `Check TVL weekly and withdraw immediately if TVL breaks below ${exitTvlM} (${p05DropPct.toFixed(1)}% P05 stress threshold) or withdrawals pause; ${profile.cleanup}.`,
       cost_usd: exitFee,
       cost_label: `${fmtStepFee(exitFee)} unwind`,
       minutes: 5,
       time_label: '5m',
     },
     {
-      phase: 'LOG',
-      action: `Record wallet, tx hashes, and net $${netOfFees.toFixed(2)} (${verdict}) vs $${tbillHurdle.toFixed(2)} 4% T-bill benchmark; claim only via official domain.`,
+      phase: 'BUDGET',
+      action: `Log tx hashes; $${totalFees.toFixed(2)} fees + $${tbillHurdle.toFixed(2)} 4% capital charge vs $${modelledDrop.toFixed(2)} drop = net ${netOfFees >= 0 ? '+' : ''}$${netOfFees.toFixed(2)} ($${netPerHour.toFixed(2)}/h -> ${verdict}).`,
       cost_usd: 0,
       cost_label: 'free log',
       minutes: 3,

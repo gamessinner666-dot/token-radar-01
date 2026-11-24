@@ -32,16 +32,22 @@ import type {
   SnapshotProtocol,
 } from './types.ts';
 
-export const MODEL_VERSION = 'radar-3' as const;
-const DEFAULT_DROP_SHARE = 0.07;
+export const MODEL_VERSION = 'radar-4' as const;
+const DEFAULT_DROP_SHARE = 0.10;
 const DEFAULT_HORIZON_WEEKS = 12;
 const TBILL_APR = 0.04;
-const FARM_HOURLY_HURDLE = 20;
-const N_BOOTSTRAP = 100;
+const FARM_HOURLY_HURDLE = 25;
+const N_BOOTSTRAP = 200;
 const CAT_RIDGE_K = 64;
 
 const round4 = (n: number): number => Math.round(n * 10_000) / 10_000;
 const round3 = (n: number): number => Math.round(n * 1_000) / 1_000;
+const stdDev = (arr: readonly number[]): number => {
+  if (arr.length < 2) return 0;
+  const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+  const v = arr.reduce((a, b) => a + (b - mean) ** 2, 0) / (arr.length - 1);
+  return round4(Math.sqrt(v));
+};
 
 /** Deterministic FNV-1a 32-bit hex checksum matching dashboard/app.js identically. */
 export function fnv1aHex(rows: readonly { slug: string; implied_value_usd: number }[]): string {
@@ -85,8 +91,9 @@ function buildStandalonePeers(snapshot: Snapshot, globalMed7d: number): {
     const ay = d === null ? null : d / 365;
     return {
       slug: p.slug,
+      category: p.category ?? 'Uncategorized',
       y: isPreToken(p) ? 0 : 1,
-      sector: 'Yield, Basis & Farming', // assigned cleanly via category below if needed
+      sector: sectorOf(p.category),
       age_years: ay,
       age_filled: ay === null ? medianAgeYears : ay,
       listed_at: p.listed_at,
@@ -206,6 +213,7 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
   }[] = [
     { step: 'Base rate of peers', opts: {}, status: 'baseline' },
     { step: '+ Age (log years listed)', opts: { useAge: true }, status: 'kept' },
+    { step: '+ Cat token share (m=8)', opts: { useAge: true, useCatShare: true }, status: 'tested_not_kept' },
     { step: '+ Size (log TVL)', opts: { useAge: true, useTvl: true }, status: 'kept' },
     { step: '+ 7d TVL growth', opts: { useAge: true, useTvl: true, useG7d: true }, status: 'kept' },
     { step: '+ Chain count (ln)', opts: { useAge: true, useTvl: true, useG7d: true, useChains: true }, status: 'tested_not_kept' },
@@ -252,14 +260,22 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
   const baseOddsAbl = oddsAblation[0]!;
   const keptOddsAbl = oddsAblation.find((r) => r.step === '+ 7d TVL growth')!;
 
+  const catAdjVals = Object.values(fullStage1.cat_adj);
+  const catAdjMin = catAdjVals.length > 0 ? round4(Math.min(...catAdjVals)) : 0;
+  const catAdjMax = catAdjVals.length > 0 ? round4(Math.max(...catAdjVals)) : 0;
+
   return {
     model_version: MODEL_VERSION,
     price_model: {
       ref_tvl_usd: fullStage1.ref_tvl_usd,
       intercept: fullStage1.intercept,
+      intercept_se: 0,
       beta_tvl: fullStage1.beta_tvl,
+      beta_tvl_se: 0,
       cat_ridge_k: CAT_RIDGE_K,
       cat_adj: fullStage1.cat_adj,
+      cat_adj_min: catAdjMin,
+      cat_adj_max: catAdjMax,
       q25_log: q25,
       q75_log: q75,
       q10_log: q10,
@@ -281,8 +297,11 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
     odds_model: {
       intercept: round4(fullOdds.coef[0]!),
       beta_age: round4(fullOdds.coef[1]!),
+      beta_age_se: 0,
       beta_tvl: round4(fullOdds.coef[2]!),
+      beta_tvl_se: 0,
       beta_g7d: round4(fullOdds.coef[3]!),
+      beta_g7d_se: 0,
       beta_chains: 0,
       median_age_years: medianAgeYears,
       max_age_years: maxAgeYears,
@@ -358,10 +377,18 @@ function computeBootstrapRankRanges(
   comparables: readonly ComparableEntity[],
   candidates: readonly { protocol: SnapshotProtocol; age: number | null; sibling_symbol: string | null }[],
   cal: ModelCalibration,
-): Map<string, { low: number; high: number }> {
+): {
+  rankRanges: Map<string, { low: number; high: number }>;
+  se: { intercept: number; betaTvl: number; betaAge: number; betaOddsTvl: number; betaG7d: number };
+} {
   const rng = mulberry32(20_261_114);
   const { peers: standalone } = buildStandalonePeers(snapshot, cal.odds_model.global_med_7d);
   const rankLists = new Map<string, number[]>(candidates.map((c) => [c.protocol.slug, []]));
+  const bInt: number[] = [];
+  const bTvl: number[] = [];
+  const bAge: number[] = [];
+  const bOTvl: number[] = [];
+  const bG7d: number[] = [];
 
   for (let b = 0; b < N_BOOTSTRAP; b++) {
     const compBoot: CompWithPlacebo[] = [];
@@ -374,6 +401,11 @@ function computeBootstrapRankRanges(
     }
     const pFit = fitAndPredictPrice(compBoot, compBoot, cal.odds_model.global_med_7d, { catK: CAT_RIDGE_K }).fit;
     const oFit = fitLogisticOdds(standBoot, { useAge: true, useTvl: true, useG7d: true }).coef;
+    bInt.push(pFit.intercept);
+    bTvl.push(pFit.beta_tvl);
+    bAge.push(oFit[1]!);
+    bOTvl.push(oFit[2]!);
+    bG7d.push(oFit[3]!);
 
     const scores = candidates.map((cand) => {
       const p = cand.protocol;
@@ -404,7 +436,16 @@ function computeBootstrapRankRanges(
       high: Math.min(candidates.length, Math.round(quantile(arr, 0.90))),
     });
   }
-  return out;
+  return {
+    rankRanges: out,
+    se: {
+      intercept: stdDev(bInt),
+      betaTvl: stdDev(bTvl),
+      betaAge: stdDev(bAge),
+      betaOddsTvl: stdDev(bOTvl),
+      betaG7d: stdDev(bG7d),
+    },
+  };
 }
 
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: RadarData } {
@@ -418,7 +459,13 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     age: ageDays(snapshot.as_of, c.protocol.listed_at),
   }));
 
-  const rankRanges = computeBootstrapRankRanges(snapshot, comparables, enriched, calibration);
+  const boot = computeBootstrapRankRanges(snapshot, comparables, enriched, calibration);
+  const rankRanges = boot.rankRanges;
+  calibration.price_model.intercept_se = boot.se.intercept;
+  calibration.price_model.beta_tvl_se = boot.se.betaTvl;
+  calibration.odds_model.beta_age_se = boot.se.betaAge;
+  calibration.odds_model.beta_tvl_se = boot.se.betaOddsTvl;
+  calibration.odds_model.beta_g7d_se = boot.se.betaG7d;
 
   const scored = enriched.map((c) => {
     const p = c.protocol;
@@ -520,6 +567,20 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     farm_econ: r.farm_econ,
   }));
 
+  const raw_comps = comparables.map((c) => ({
+    slug: c.slug,
+    category: c.category,
+    tvl_usd: c.tvl_usd,
+    mcap_usd: c.mcap_usd,
+  }));
+  const raw_peers = snapshot.protocols.filter(isStandaloneForOdds).map((p) => ({
+    slug: p.slug,
+    tvl_usd: p.tvl_usd,
+    change_7d: p.change_7d,
+    age_days: ageDays(snapshot.as_of, p.listed_at),
+    y: (isPreToken(p) ? 0 : 1) as 0 | 1,
+  }));
+
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
@@ -544,6 +605,8 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     },
     rows: radarRows,
     live_comparables: comparables,
+    raw_comps,
+    raw_peers,
   };
 
   return { board, radar };
