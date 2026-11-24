@@ -1,337 +1,567 @@
 'use strict';
 (() => {
-  const D = window.RADAR, M = window.RADAR_MODEL;
-  if (!D || !M) { document.getElementById('app').textContent = 'Missing RADAR/RADAR_MODEL'; return; }
-  const V = M.verifyBoardParity(D), rows = D.rows, L = D.ledger, C = D.calibration, S = D.summary;
-  const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x)), round2 = (n) => Math.round(n * 100) / 100;
-  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const fmtU = (n) => {
-    const a = Math.abs(n), s = n < 0 ? '-' : '';
-    return a >= 1e9 ? `${s}$${(a / 1e9).toFixed(2)}B` : a >= 1e6 ? `${s}$${(a / 1e6).toFixed(a >= 100e6 ? 0 : 1)}M` : a >= 1e3 ? `${s}$${(a / 1e3).toFixed(a >= 100e3 ? 0 : 1)}k` : `${s}$${a.toFixed(a < 100 ? 2 : 0)}`;
-  };
-  const fmtS = (n) => `${n > 0 ? '+' : ''}${fmtU(n)}`, fmtP = (p) => (p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`), fmtA = (d) => (d == null ? 'legacy' : d >= 365 ? `${(d / 365).toFixed(1)}y` : `${d}d`);
-  const p0 = (n) => `${(n * 100).toFixed(0)}%`, p1 = (n) => `${(n * 100).toFixed(1)}%`, d2 = (n) => n.toFixed(2), d1 = (n) => n.toFixed(1);
-  const kpi = (l, v, n, c = '') => `<div class="kpi"><div class="lbl">${l}</div><div class="val ${c}">${v}</div><div class="note">${n}</div></div>`;
+  const D = window.RADAR;
+  const M = window.RADAR_MODEL;
+  if (!D || !M) {
+    document.getElementById('app').textContent = 'Missing RADAR or RADAR_MODEL';
+    return;
+  }
+
+  const par = M.verifyBoardParity(D);
+  const { rows, ledger: L, calibration: cal, summary: sum } = D;
+  const pm = cal.price_model;
+  const om = cal.odds_model;
+
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const f1 = (x) => x.toFixed(1);
+  const f2 = (x) => x.toFixed(2);
+  const f3 = (x) => x.toFixed(3);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function usd(n) {
+    const a = Math.abs(n);
+    const sg = n < 0 ? '-' : '';
+    if (a >= 1e9) return `${sg}$${f2(a / 1e9)}B`;
+    if (a >= 1e6) return `${sg}$${(a / 1e6).toFixed(a >= 100e6 ? 0 : 1)}M`;
+    if (a >= 1e3) return `${sg}$${(a / 1e3).toFixed(a >= 100e3 ? 0 : 1)}k`;
+    return `${sg}$${a.toFixed(a < 100 ? 2 : 0)}`;
+  }
+
+  const sUsd = (n) => `${n > 0 ? '+' : ''}${usd(n)}`;
+  const pct = (p) => (p == null ? '—' : `${p > 0 ? '+' : ''}${f1(p)}%`);
+  const ageS = (d) => (d == null ? 'legacy' : d >= 365 ? `${f1(d / 365)}y` : `${d}d`);
+  const p0 = (x) => `${(x * 100).toFixed(0)}%`;
+  const p1 = (x) => `${f1(x * 100)}%`;
+
+  const el = (t, v, c = '') => `<${t}${c ? ` class="${c}"` : ''}>${v}</${t}>`;
+  const tr = (cells, a = '') => `<tr${a}>${cells.join('')}</tr>`;
+  const td = (v, c = '') => el('td', v, c);
+  const tdN = (v, c = '') => td(v, c ? `num ${c}` : 'num');
+  const kpi = (l, v, n, c = '') =>
+    `<div class="kpi"><div class="lbl">${l}</div><div class="val ${c}">${v}</div><div class="note">${n}</div></div>`;
   const pill = (ok, t) => `<div class="pill ${ok ? 'ok' : 'warn'}">${ok ? '✓' : '!'} ${t}</div>`;
-  const card = (t, r, b) => `<div class="card"><div class="ctitle"><span>${t}</span><span class="mono">${r}</span></div>${b}</div>`;
-  const eqLn = (l, r, c = '') => `<div class="eq-line ${c}"><span>${l}</span><span>${r}</span></div>`;
+  const card = (t, r, b) =>
+    `<div class="card"><div class="ctitle"><span>${t}</span><span class="mono">${r}</span></div>${b}</div>`;
+  const eqRow = (l, r, c = '') => `<div class="eq-line ${c}"><span>${l}</span><span>${r}</span></div>`;
   const ecBox = (l, v, c = '') => `<div class="ec"><div class="l">${l}</div><div class="v ${c}">${v}</div></div>`;
+  const opt = (v, lb, sel) => `<option value="${esc(v)}"${sel ? ' selected' : ''}>${lb}</option>`;
+  const tbl = (cls, cols, body) =>
+    `<table class="${cls}"><thead><tr>${cols.map((h) =>
+      h[0] === '#' ? `<th class="num">${h.slice(1)}</th>` : `<th>${h}</th>`).join('')}` +
+    `</tr></thead><tbody>${body}</tbody></table>`;
+
   const bdg = (c, t) => `<span class="bdg ${c}">${t}</span>`;
-  const tBdg = (t) => bdg(t === 'watchlist' ? 'b-wl' : t === 'large-cap' ? 'b-lc' : 'b-e', t === 'watchlist' ? 'WL' : t === 'large-cap' ? 'LC' : 'E');
-  const vBdg = (v) => bdg(v === 'FARM' ? 'b-farm' : v === 'MARGINAL' ? 'b-marg' : 'b-skip', v === 'MARGINAL' ? 'MARG' : v);
-  const tdN = (v, c = '') => `<td class="num${c ? ` ${c}` : ''}">${v}</td>`;
-  const rng = (t) => `<span class="rng">${t}</span>`;
-  const thR = (cols) => `<tr>${cols.map((c) => (c[0] === '#' ? `<th class="num">${c.slice(1)}</th>` : `<th>${c}</th>`)).join('')}</tr>`;
-  const tbl = (cls, ths, body) => `<table class="${cls}"><thead>${thR(ths)}</thead><tbody>${body}</tbody></table>`;
-  const DEF = { tab: 'board', verdict: 'all', tier: 'all', cat: 'all', chain: 'all', q: '', sort: 'rank', dir: 'asc', dep: 0, drop: C.default_drop_share, wk: C.default_horizon_weeks, exp: null, p: null };
-  const st = { ...DEF };
+  const tBdg = (t) => bdg(t === 'watchlist' ? 'bw' : t === 'large-cap' ? 'bl' : 'be',
+    t === 'watchlist' ? 'WL' : t === 'large-cap' ? 'LC' : 'E');
+  const vBdg = (v) => bdg(v === 'FARM' ? 'bf' : v === 'MARGINAL' ? 'bm' : 'bs',
+    v === 'MARGINAL' ? 'MARG' : v);
+  const mBdg = (m, d = '') => bdg(m <= 3 ? 'bf' : 'bm', `×${f2(m)}${d ? ` ${d}` : ''}`);
+  const stCls = (s) => (s === 'kept' ? 'kept' : s === 'tested_not_kept' ? 'rej' : '');
+  const stTxt = (s) => (s === 'tested_not_kept' ? 'drop' : esc(s));
+
+  const DEF = {
+    tab: 'board', verdict: 'all', tier: 'all', cat: 'all', chain: 'all', q: '',
+    sort: 'rank', dir: 'asc', dep: 0, drop: cal.default_drop_share, wk: cal.default_horizon_weeks,
+    exp: null, p: null,
+  };
+  const S = { ...DEF };
 
   function readHash() {
-    Object.assign(st, DEF);
+    Object.assign(S, DEF);
     const raw = (location.hash || '').replace(/^#/, '');
     if (!raw) return;
-    const sp = new URLSearchParams(raw);
-    if (sp.get('tab') === 'comps' || sp.get('tab') === 'aside') st.tab = sp.get('tab');
-    for (const k of ['verdict', 'tier', 'cat', 'chain', 'q', 'sort', 'exp', 'p']) if (sp.get(k)) st[k] = sp.get(k);
-    if (sp.get('dir') === 'desc' || sp.get('dir') === 'asc') st.dir = sp.get('dir');
-    if (sp.get('dep')) st.dep = Number(sp.get('dep')) || 0;
-    if (sp.get('drop')) st.drop = Number(sp.get('drop')) || C.default_drop_share;
-    if (sp.get('wk')) st.wk = Number(sp.get('wk')) || C.default_horizon_weeks;
+    const qp = new URLSearchParams(raw);
+    const tab = qp.get('tab');
+    if (tab === 'audit' || tab === 'comps' || tab === 'aside') S.tab = tab;
+    for (const k of ['verdict', 'tier', 'cat', 'chain', 'q', 'sort', 'exp', 'p']) {
+      if (qp.get(k)) S[k] = qp.get(k);
+    }
+    if (qp.get('dir') === 'desc' || qp.get('dir') === 'asc') S.dir = qp.get('dir');
+    if (qp.get('dep')) S.dep = Number(qp.get('dep')) || 0;
+    if (qp.get('drop')) S.drop = Number(qp.get('drop')) || cal.default_drop_share;
+    if (qp.get('wk')) S.wk = Number(qp.get('wk')) || cal.default_horizon_weeks;
   }
 
   function writeHash() {
-    const sp = new URLSearchParams();
-    if (st.p) sp.set('p', st.p);
+    const qp = new URLSearchParams();
+    if (S.p) qp.set('p', S.p);
     else {
-      if (st.tab !== 'board') sp.set('tab', st.tab);
-      for (const k of ['verdict', 'tier', 'cat', 'chain', 'q', 'exp']) if (st[k] && st[k] !== 'all') sp.set(k, st[k]);
-      if (st.sort !== 'rank') sp.set('sort', st.sort);
-      if (st.dir !== 'asc') sp.set('dir', st.dir);
+      if (S.tab !== 'board') qp.set('tab', S.tab);
+      for (const k of ['verdict', 'tier', 'cat', 'chain', 'q', 'exp']) {
+        if (S[k] && S[k] !== 'all') qp.set(k, S[k]);
+      }
+      if (S.sort !== 'rank') qp.set('sort', S.sort);
+      if (S.dir !== 'asc') qp.set('dir', S.dir);
     }
-    if (st.dep) sp.set('dep', String(st.dep));
-    if (Math.abs(st.drop - C.default_drop_share) > 1e-6) sp.set('drop', String(st.drop));
-    if (st.wk !== C.default_horizon_weeks) sp.set('wk', String(st.wk));
-    const h = sp.toString();
+    if (S.dep) qp.set('dep', String(S.dep));
+    if (Math.abs(S.drop - cal.default_drop_share) > 1e-6) qp.set('drop', String(S.drop));
+    if (S.wk !== cal.default_horizon_weeks) qp.set('wk', String(S.wk));
+    const h = qp.toString();
     history.replaceState(null, '', h ? `#${h}` : location.pathname + location.search);
   }
 
-  const isDef = () => st.dep === 0 && Math.abs(st.drop - C.default_drop_share) < 1e-6 && st.wk === C.default_horizon_weeks;
-  const getEcon = (r) => (isDef() ? r.farm_econ : M.buildFarmTicket(r, C, st.dep > 0 ? st.dep : null, st.drop, st.wk));
+  const isDef = () => S.dep === 0 &&
+    Math.abs(S.drop - cal.default_drop_share) < 1e-6 && S.wk === cal.default_horizon_weeks;
+  const getEcon = (r) => (isDef()
+    ? { ...r.farm_econ, items: r.farm_items }
+    : M.repriceFarmScenario(r, cal, S.dep > 0 ? S.dep : null, S.drop, S.wk));
 
-  function scatterSvg(hiRow, hPx = 110) {
-    const W = 430, H = hPx, l = 34, r = 10, t = 8, b = 18, x0 = 6.7, x1 = 10.6, y0 = 5.4, y1 = 10.7, pm = C.price_model;
-    const px = (x) => (l + ((clamp(x, x0, x1) - x0) / (x1 - x0)) * (W - l - r)).toFixed(1);
-    const py = (y) => (H - b - ((clamp(y, y0, y1) - y0) / (y1 - y0)) * (H - t - b)).toFixed(1);
-    const f10 = (tvl, q = 0) => (Math.log(pm.ref_tvl_usd) + pm.intercept + pm.beta_tvl * Math.log(tvl / pm.ref_tvl_usd) + q) / Math.LN10;
-    const tA = 10 ** x0, tB = 10 ** x1;
-    const poly = `${px(x0)},${py(f10(tA, pm.q75_log))} ${px(x1)},${py(f10(tB, pm.q75_log))} ${px(x1)},${py(f10(tB, pm.q25_log))} ${px(x0)},${py(f10(tA, pm.q25_log))}`;
-    const cD = D.live_comparables.map((c) => `<circle cx="${px(Math.log10(c.tvl_usd))}" cy="${py(Math.log10(c.mcap_usd))}" r="2.1" fill="#38bdf8" fill-opacity=".72"/>`).join('');
-    const pD = rows.slice(0, 65).map((u) => `<circle cx="${px(Math.log10(u.tvl_usd))}" cy="${py(Math.log10(u.value_if_launched_usd))}" r="1.7" fill="#a78bfa" fill-opacity=".65"/>`).join('');
-    const yT = [[6, '1M'], [7, '10M'], [8, '100M'], [9, '1B'], [10, '10B']].map(([v, lb]) =>
-      `<line x1="${l}" y1="${py(v)}" x2="${W - r}" y2="${py(v)}" stroke="#1f2c3e"/>` +
-      `<text x="${l - 4}" y="${(+py(v) + 3).toFixed(1)}" text-anchor="end" fill="#7f93ad" font-size="8.2">${lb}</text>`,
-    ).join('');
-    const xT = [[7, '10M'], [8, '100M'], [9, '1B'], [10, '10B']].map(([v, lb]) =>
-      `<text x="${px(v)}" y="${H - 5}" text-anchor="middle" fill="#7f93ad" font-size="8.2">${lb}</text>`,
-    ).join('');
-    const hi = hiRow ? `<circle cx="${px(Math.log10(hiRow.tvl_usd))}" cy="${py(Math.log10(hiRow.value_if_launched_usd))}" r="5" fill="#f59e0b" stroke="#fff" stroke-width="1.4"/>` : '';
-    return [
-      `<svg class="sc-svg" style="height:${hPx}px" viewBox="0 0 ${W} ${H}">${yT}${xT}<polygon points="${poly}" fill="#22c55e" fill-opacity=".14"/>`,
-      `<line x1="${px(x0)}" y1="${py(f10(tA))}" x2="${px(x1)}" y2="${py(f10(tB))}" stroke="#22c55e" stroke-width="1.5"/>${cD}${pD}${hi}</svg>`,
-    ].join('');
+  function scatterSvg(hi, h = 185) {
+    const w = 520;
+    const [L, R, T, B, x0, x1, y0, y1] = [38, 12, 10, 22, 6.7, 10.6, 5.4, 10.7];
+    const px = (x) => f1(L + ((clamp(x, x0, x1) - x0) / (x1 - x0)) * (w - L - R));
+    const py = (y) => f1(h - B - ((clamp(y, y0, y1) - y0) / (y1 - y0)) * (h - T - B));
+    const f10 = (tvl, q = 0) => (Math.log(pm.ref_tvl_usd) + pm.intercept +
+      pm.beta_tvl * Math.log(tvl / pm.ref_tvl_usd) + q) / Math.LN10;
+    const tA = 10 ** x0;
+    const tB = 10 ** x1;
+    const poly = [
+      `${px(x0)},${py(f10(tA, pm.q75_log))}`, `${px(x1)},${py(f10(tB, pm.q75_log))}`,
+      `${px(x1)},${py(f10(tB, pm.q25_log))}`, `${px(x0)},${py(f10(tA, pm.q25_log))}`,
+    ].join(' ');
+    const cDots = D.live_comparables.map((c) =>
+      `<circle cx="${px(Math.log10(c.tvl_usd))}" cy="${py(Math.log10(c.mcap_usd))}" r="2.6"/>`).join('');
+    const pDots = rows.slice(0, 90).map((r) =>
+      `<circle cx="${px(Math.log10(r.tvl_usd))}" cy="${py(Math.log10(r.value_if_launched_usd))}" r="2"/>`).join('');
+    const yG = [[6, '$1M'], [7, '$10M'], [8, '$100M'], [9, '$1B'], [10, '$10B']].map(([v, lb]) =>
+      `<line x1="${L}" y1="${py(v)}" x2="${w - R}" y2="${py(v)}" stroke="#1d2a3d"/>` +
+      `<text x="${L - 5}" y="${f1(+py(v) + 3)}" text-anchor="end">${lb}</text>`).join('');
+    const xT = [[7, '$10M'], [8, '$100M'], [9, '$1B'], [10, '$10B']].map(([v, lb]) =>
+      `<text x="${px(v)}" y="${h - 6}" text-anchor="middle">${lb}</text>`).join('');
+    const hiC = hi ? `<circle cx="${px(Math.log10(hi.tvl_usd))}" ` +
+      `cy="${py(Math.log10(hi.value_if_launched_usd))}" r="5.5" fill="#f59e0b" stroke="#fff" stroke-width="1.5"/>` : '';
+    return `<svg class="sc-svg" style="height:${h}px" viewBox="0 0 ${w} ${h}">` +
+      `<g fill="#7b90aa" font-size="9" font-family="monospace">${yG}${xT}</g>` +
+      `<polygon points="${poly}" fill="#22c55e" fill-opacity=".14"/>` +
+      `<line x1="${px(x0)}" y1="${py(f10(tA))}" x2="${px(x1)}" y2="${py(f10(tB))}" stroke="#22c55e" stroke-width="1.8"/>` +
+      `<g fill="#38bdf8" fill-opacity=".75">${cDots}</g><g fill="#a78bfa" fill-opacity=".65">${pDots}</g>${hiC}</svg>`;
   }
 
   const cats = Array.from(new Set(rows.map((r) => r.category || 'Uncategorized'))).sort();
   const cMap = new Map();
   for (const r of rows) cMap.set(r.farm_econ.best_chain, (cMap.get(r.farm_econ.best_chain) || 0) + 1);
-  const topCh = Array.from(cMap.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([c]) => c);
-  const maxI = Math.max(...rows.map((r) => r.implied_high_usd)), minI = Math.min(...rows.map((r) => r.implied_low_usd));
-  const logP = (x) => clamp(((Math.log10(Math.max(minI, x)) - Math.log10(minI)) / (Math.log10(maxI) - Math.log10(minI))) * 100, 0, 100);
+  const chains = Array.from(cMap.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([c]) => c);
+  const hiMax = Math.max(...rows.map((r) => r.implied_high_usd));
+  const loMin = Math.min(...rows.map((r) => r.implied_low_usd));
+  const bPct = (v) => clamp(
+    ((Math.log10(Math.max(loMin, v)) - Math.log10(loMin)) / (Math.log10(hiMax) - Math.log10(loMin))) * 100,
+    0,
+    100,
+  );
 
-  const SK = { rank: (a) => a.r.rank, name: (a) => a.r.name, tvl: (a) => a.r.tvl_usd, g7d: (a) => a.r.change_7d ?? -999, age: (a) => a.r.age_days ?? 99999, odds: (a) => a.r.launch_odds, val: (a) => a.r.value_if_launched_usd, implied: (a) => a.r.implied_value_usd, net: (a) => a.e.net_of_fees_usd, netHr: (a) => a.e.net_per_hour };
+  const SKEYS = {
+    rank: (x) => x.r.rank, name: (x) => x.r.name, tvl: (x) => x.r.tvl_usd,
+    g7d: (x) => x.r.change_7d ?? -999, age: (x) => x.r.age_days ?? 99999, odds: (x) => x.r.launch_odds,
+    val: (x) => x.r.value_if_launched_usd, implied: (x) => x.r.implied_value_usd,
+    net: (x) => x.e.net_of_fees_usd, netHr: (x) => x.e.net_per_hour,
+  };
 
   function getFiltered() {
-    const econs = rows.map((r) => ({ r, e: getEcon(r) }));
-    let fN = 0, mN = 0, sN = 0;
-    for (const x of econs) x.e.verdict === 'FARM' ? fN++ : x.e.verdict === 'MARGINAL' ? mN++ : sN++;
-    const ql = st.q.trim().toLowerCase();
-    const flt = econs.filter(({ r, e }) =>
-      (st.verdict === 'all' || e.verdict === st.verdict) && (st.tier === 'all' || r.tier === st.tier) &&
-      (st.cat === 'all' || (r.category || 'Uncategorized') === st.cat) &&
-      (st.chain === 'all' || r.chains.includes(st.chain) || e.best_chain === st.chain) &&
-      (!ql || `${r.name} ${r.slug} ${r.category || ''} ${r.chains.join(' ')}`.toLowerCase().includes(ql)),
-    );
-    const m = st.dir === 'asc' ? 1 : -1, fn = SK[st.sort] || SK.netHr;
-    flt.sort((a, b) => {
-      const va = fn(a), vb = fn(b);
-      return (typeof va === 'string' ? va.localeCompare(vb) : va - vb) * m || a.r.rank - b.r.rank;
-    });
-    return { flt, fN, mN, sN };
-  }
-
-  function renderInline(r) {
-    const tk = M.buildFarmTicket(r, C, st.dep > 0 ? st.dep : null, st.drop, st.wk), ev = M.evaluateProtocol(r, V.pFit, V.oFit, C);
-    const nodes = [
-      `TVL <b>${fmtU(r.tvl_usd)}</b>`, `Base exp(${d2(C.price_model.intercept)}) <b>×${d2(ev.baseMult)}</b>`,
-      `Size (TVL/$100M)^${d2(C.price_model.beta_tvl)} <b>×${d2(ev.sizeMult)}</b>`,
-      `Cat (${esc(r.category || 'Uncat')}) <b>×${d2(ev.catMult)}</b>`, `If Launched <b>${fmtU(r.value_if_launched_usd)}</b>`,
-      `Odds <b>${p1(r.launch_odds)}</b>`, `Implied (#${r.rank}) <b>${fmtU(r.implied_value_usd)}</b>`,
-    ];
-    const ch = nodes.map((s, i) => `<div class="eq-node${i === nodes.length - 1 ? ' hi' : ''}">${s}</div>`).join('<span class="mu">→</span>');
-    const sr = tk.items.map((it) => `<tr><td><span class="ph">${esc(it.phase)}</span></td><td>${esc(it.action)}</td><td class="ct">${esc(it.cost_label)} · ${esc(it.time_label)}</td></tr>`).join('');
-    return [
-      '<tr><td colspan="10" class="exp-cell"><div class="ctitle mt4">',
-      `<span>Eq &amp; ${tk.items.length}-Step Plan · ${esc(r.name)} (${esc(tk.best_chain)} · ${tk.total_minutes}m)</span>`,
-      `<span class="mono">${tk.verdict}:${fmtS(tk.net_of_fees_usd)} (${fmtU(tk.net_per_hour)}/h vs ${fmtU(tk.tbill_hurdle_usd)}) · <button class="eb" data-open="${esc(r.slug)}">Dossier →</button></span>`,
-      `</div><div class="eq-chain">${ch}</div><table class="xt"><tbody>${sr}</tbody></table></td></tr>`,
-    ].join('');
-  }
-
-  function renderCover() {
-    const pm = C.price_model, om = C.odds_model, { flt, fN, mN, sN } = getFiltered(), ql = st.q.trim().toLowerCase();
-    const segs = [
-      ['WL', L.watchlist, '#38bdf8'], ['LC', L.large_cap, '#a78bfa'], ['Early', L.early, '#22c55e'], ['Comps', L.priced_comps, '#0ea5e9'],
-      ['Tok', L.other_tokenized, '#64748b'], ['Brg', L.excl_bridges, '#475569'], ['LST', L.excl_lst_btc, '#f59e0b'], ['Sib', L.excl_cex_ver_sib, '#ef4444'],
-    ];
-    const th = (id, lb, c = '') => `<th data-sort="${id}" class="${c}${st.sort === id ? ' sort' : ''}">${lb}${st.sort === id ? (st.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
-    let hH = '', bH = '';
-    if (st.tab === 'board') {
-      hH = `<tr>${[th('rank', '# · Band'), th('name', 'Protocol · Category · Route'), th('tvl', 'TVL', 'num'), th('g7d', '7d', 'num'), th('age', 'Age', 'num'), th('odds', 'Odds', 'num'), th('val', 'If Launched', 'num'), th('implied', 'Implied · P25–75', 'num'), th('net', 'Verdict · Net $', 'num'), th('netHr', 'Net / Hr', 'num')].join('')}</tr>`;
-      bH = flt.map(({ r, e }) => {
-        const exp = st.exp === r.slug, lP = logP(r.implied_low_usd), hP = logP(r.implied_high_usd), mP = logP(r.implied_value_usd);
-        const tr = [
-          `<tr class="rm ${exp ? 'rx' : ''}" data-slug="${esc(r.slug)}">`,
-          `<td class="mono"><button class="eb" data-exp="${esc(r.slug)}">${exp ? '−' : '+'}</button> <b>${r.rank}</b>${rng(`${r.rank_low}–${r.rank_high}`)}</td>`,
-          `<td><div class="pname">${esc(r.name)} ${tBdg(r.tier)}${r.sibling_symbol ? ` ${bdg('b-warn', `SIB:${esc(r.sibling_symbol)}`)}` : ''}</div>`,
-          `<div class="pmeta">${esc(r.category || 'Uncat')} · ${esc(e.best_chain)} (${esc(e.family_label)})</div></td>`,
-          tdN(fmtU(r.tvl_usd)), tdN(fmtP(r.change_7d), r.change_7d == null ? '' : r.change_7d >= 0 ? 'pos' : 'neg'), tdN(fmtA(r.age_days)),
-          tdN(`${p1(r.launch_odds)}<div class="pb"><div class="pf" style="width:${p1(r.launch_odds)}"></div></div>`), tdN(fmtU(r.value_if_launched_usd)),
-          tdN(`<b>${fmtU(r.implied_value_usd)}</b>${rng(`${fmtU(r.implied_low_usd)}–${fmtU(r.implied_high_usd)}`)}<div class="rb"><div class="rr" style="left:${d1(lP)}%;width:${d1(Math.max(4, hP - lP))}%"></div><div class="rk" style="left:${d1(mP)}%"></div></div>`),
-          tdN(`${vBdg(e.verdict)} <span class="${e.net_of_fees_usd > 0 ? 'pos' : 'neg'}">${fmtS(e.net_of_fees_usd)}</span>${rng(`fee ${fmtU(e.total_fees_usd)} · ${fmtU(e.deposit_usd)}`)}`),
-          tdN(`<b class="${e.net_per_hour >= C.farm_hourly_hurdle && e.verdict === 'FARM' ? 'pos' : ''}">$${d1(e.net_per_hour)}/h</b>${rng(`${d1(e.total_hours)}h/${e.horizon_weeks}w`)}`), '</tr>',
-        ].join('');
-        return exp ? tr + renderInline(r) : tr;
-      }).join('');
-    } else if (st.tab === 'comps') {
-      hH = thR(['Sym', 'Comparable · Category · Chains', '#TVL', '#7d', '#Age', '#MC/TVL', '#LOO', '#MCap', '#Miss', '#Dir']);
-      bH = D.live_comparables.filter((c) => !ql || `${c.name} ${c.symbol} ${c.category || ''}`.toLowerCase().includes(ql)).map((c) => [
-        `<tr><td class="mono"><b>${esc(c.symbol)}</b></td>`,
-        `<td><div class="pname">${esc(c.name)}</div><div class="pmeta">${esc(c.category || 'Uncat')} · ${esc(c.chains.slice(0, 3).join(', '))}</div></td>`,
-        tdN(fmtU(c.tvl_usd)), tdN(fmtP(c.change_7d), c.change_7d == null ? '' : c.change_7d >= 0 ? 'pos' : 'neg'), tdN(fmtA(c.age_days)),
-        tdN(`${c.ratio.toFixed(2)}×`), tdN(fmtU(c.loo_pred_usd)), tdN(`<b>${fmtU(c.mcap_usd)}</b>`),
-        tdN(bdg(c.loo_miss <= 3 ? 'b-farm' : 'b-marg', `×${c.loo_miss.toFixed(2)}`)), tdN(c.loo_dir), '</tr>',
-      ].join('')).join('');
-    } else {
-      hH = thR(['Slug', 'Set-Aside Protocol', 'Category', '#TVL', 'MECE Exclusion Reason']);
-      bH = D.set_aside.filter((x) => !ql || `${x.name} ${x.slug} ${x.category} ${x.reason}`.toLowerCase().includes(ql)).map((x) =>
-        `<tr><td class="mono">${esc(x.slug)}</td><td class="pname">${esc(x.name)}</td><td>${esc(x.category)}</td>${tdN(fmtU(x.tvl_usd))}<td>${bdg('b-warn', esc(x.reason))}</td></tr>`,
-      ).join('');
+    const list = rows.map((r) => ({ r, e: getEcon(r) }));
+    let [farmN, margN, skipN] = [0, 0, 0];
+    for (const x of list) {
+      if (x.e.verdict === 'FARM') farmN++;
+      else if (x.e.verdict === 'MARGINAL') margN++;
+      else skipN++;
     }
+    const ql = S.q.trim().toLowerCase();
+    const out = list.filter(({ r, e }) =>
+      (S.verdict === 'all' || e.verdict === S.verdict) &&
+      (S.tier === 'all' || r.tier === S.tier) &&
+      (S.cat === 'all' || (r.category || 'Uncategorized') === S.cat) &&
+      (S.chain === 'all' || r.chains.includes(S.chain) || e.best_chain === S.chain) &&
+      (!ql || `${r.name} ${r.slug} ${r.category || ''} ${r.chains.join(' ')}`.toLowerCase().includes(ql)));
+    const mul = S.dir === 'asc' ? 1 : -1;
+    const fn = SKEYS[S.sort] || SKEYS.rank;
+    out.sort((a, b) => {
+      const va = fn(a);
+      const vb = fn(b);
+      return (typeof va === 'string' ? va.localeCompare(vb) : va - vb) * mul || a.r.rank - b.r.rank;
+    });
+    return { out, farmN, margN, skipN };
+  }
 
-    const stC = (s) => (s === 'kept' ? 'kept' : s === 'tested_not_kept' ? 'rej' : ''), stL = (s) => (s === 'tested_not_kept' ? 'drop' : esc(s));
-    const abl1 = pm.ablation.map((a) => `<tr><td>${esc(a.step)}</td>${tdN(`×${d2(a.loo_miss)}`)}${tdN(`×${d2(a.wf_miss)}`)}${tdN(`${p0(a.loo_w3x)}/${p0(a.wf_w3x)}`)}<td class="${stC(a.status)}">${stL(a.status)}</td></tr>`).join('');
-    const abl2 = om.ablation.map((a) => `<tr><td>${esc(a.step)}</td>${tdN(a.cv10_brier.toFixed(3))}${tdN(a.wf_brier.toFixed(3))}${tdN(p0(a.wf_acc))}<td class="${stC(a.status)}">${stL(a.status)}</td></tr>`).join('');
-    const nShown = st.tab === 'board' ? flt.length : st.tab === 'comps' ? D.live_comparables.length : D.set_aside.length;
-    const pillsH = [
-      pill(V.refitPriceOk && V.refitOddsOk, 'Huber+Logit=main.ts'), pill(V.ablationOk, 'LOO/WF Abl Exact'),
-      pill(V.mismatches === 0, `${rows.length - V.mismatches}/${rows.length} Exact`),
-      pill(V.monoOk && V.totalExactOk, `1..${rows.length} & ${fmtU(V.recomputedTotal)}`),
-      pill(V.checksumOk, `CRC ${esc(V.checksum)}`), pill(V.wlOk && V.ledgerOk, `40/40 WL · ${V.ledgerSum}/758`),
+  function renderHeader() {
+    const tb = (id, lb) => `<button class="btn${S.tab === id ? ' on' : ''}" data-tab="${id}">${lb}</button>`;
+    return '<div class="hdr"><div class="brand"><h1>Token Radar</h1>' +
+      `<span class="ver">${esc(D.model_version)} · CRC ${esc(cal.board_checksum)}</span>` +
+      `<span class="sub">Snapshot ${esc(D.as_of)} · WL >= ${usd(D.floor_usd)} · Early >= $5M · Offline (not advice)` +
+      `</span></div><div class="tabs">${tb('board', `Board (${rows.length})`)}${tb('audit', 'Model & Audit')}` +
+      `${tb('comps', `Live Comps (${D.live_comparables.length})`)}${tb('aside', `Set Aside (${D.set_aside.length})`)}` +
+      '</div></div>';
+  }
+
+  const stepsHtml = (items) => `<table class="steps-tbl"><tbody>${items.map((it) => tr([
+    td(`<span class="ph">${esc(it.phase)}</span>`), td(esc(it.action)),
+    td(`${esc(it.cost_label)}<br/>${esc(it.time_label)}`, 'cost-time'),
+  ])).join('')}</tbody></table>`;
+
+  function renderExp(r) {
+    const e = getEcon(r);
+    const ev = M.evaluateProtocol(r, par.pFit, par.oFit, cal);
+    const nodes = [
+      `TVL <b>${usd(r.tvl_usd)}</b>`, `Base exp(${f2(pm.intercept)}) <b>×${f2(ev.baseMult)}</b>`,
+      `Size (TVL/$100M)^${f2(pm.beta_tvl)} <b>×${f2(ev.sizeMult)}</b>`,
+      `Cat (${esc(r.category || 'Uncat')}) <b>×${f2(ev.catMult)}</b>`,
+      `If Launched <b>${usd(r.value_if_launched_usd)}</b>`, `Odds <b>${p1(r.launch_odds)}</b>`,
+      `Implied (#${r.rank}) <b>${usd(r.implied_value_usd)}</b>`,
+    ];
+    const eqC = nodes.map((n, i) => `<div class="eq-node${i === nodes.length - 1 ? ' hi' : ''}">${n}</div>`)
+      .join('<span class="sub">→</span>');
+    return '<tr><td colspan="10" class="exp-cell"><div class="ctitle">' +
+      `<span>Equation &amp; ${e.items.length}-Step Plan · ${esc(r.name)} (${esc(e.best_chain)} · ${e.total_minutes}m)</span>` +
+      `<span class="mono">${e.verdict}: ${sUsd(e.net_of_fees_usd)} (${usd(e.net_per_hour)}/h vs ${usd(e.tbill_hurdle_usd)} carry)` +
+      ` · <button class="exp-btn" data-open="${esc(r.slug)}">Open Dossier →</button></span></div>` +
+      `<div class="eq-chain">${eqC}</div>${stepsHtml(e.items)}</td></tr>`;
+  }
+
+  const filterToolbar = (title, ph, countTxt) =>
+    `<div class="toolbar"><div class="grp"><span class="lbl-s">${title}</span>` +
+    `<input id="f-q" type="search" value="${esc(S.q)}" placeholder="${ph}" /></div>` +
+    `<span class="sub">${countTxt}</span></div>`;
+
+  function renderBoard() {
+    const { out, farmN, margN, skipN } = getFiltered();
+    const segs = [
+      ['WL', L.watchlist, '#38bdf8'], ['LC', L.large_cap, '#a78bfa'], ['Early', L.early, '#22c55e'],
+      ['Comps', L.priced_comps, '#0ea5e9'], ['Tok', L.other_tokenized, '#64748b'],
+      ['Bridges', L.excl_bridges, '#475569'], ['LST/BTC', L.excl_lst_btc, '#f59e0b'],
+      ['Sib/CEX', L.excl_cex_ver_sib, '#ef4444'],
+    ];
+    const mece = `<div class="mece-bar">${segs.map(([, n, c]) =>
+      `<div style="width:${(n / L.total) * 100}%;background:${c}"></div>`).join('')}</div>` +
+      `<div class="mece-leg">${segs.map(([lb, n, c]) =>
+        `<span><i class="dot" style="background:${c}"></i>${lb} <b class="mono">${n}</b></span>`).join('')}</div>`;
+    const pills = [
+      pill(par.refitPriceOk && par.refitOddsOk, 'Huber+Logit Refit = main.ts'),
+      pill(par.ablationOk, 'Blind LOO/WF Ablations Exact'),
+      pill(par.mismatches === 0, `${rows.length - par.mismatches}/${rows.length} Rows Exact`),
+      pill(par.monoOk && par.totalExactOk, `Ranks 1–${rows.length} · ${usd(par.recomputedTotal)}`),
+      pill(par.checksumOk, `CRC ${esc(par.checksum)} Exact`),
+      pill(par.wlOk && par.ledgerOk, `40/40 WL · ${par.ledgerSum}/758 MECE`),
     ].join('');
-    const covR = [
-      `<tr><td>≤×3</td>${tdN('—')}${tdN(p0(pm.within3x_loo))}${tdN(p0(pm.within3x_wf))}</tr>`,
-      `<tr><td>50%</td>${tdN('50%')}${tdN(p0(pm.cov50_loo))}${tdN(p0(pm.cov50_wf))}</tr>`,
-      `<tr><td>80%</td>${tdN('80%')}${tdN(p0(pm.cov80_loo))}${tdN(p0(pm.cov80_wf))}</tr>`,
+
+    const th = (id, lb, c = '') => `<th data-sort="${id}" class="${c}${S.sort === id ? ' sort' : ''}">` +
+      `${lb}${S.sort === id ? (S.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
+    const head = `<tr>${[
+      th('rank', '# · Band'), th('name', 'Protocol · Category · Lowest-Gas Route'), th('tvl', 'TVL', 'num'),
+      th('g7d', '7d', 'num'), th('age', 'Age', 'num'), th('odds', 'Odds', 'num'), th('val', 'If Launched', 'num'),
+      th('implied', 'Implied · P25–P75', 'num'), th('net', 'Verdict · Net $', 'num'), th('netHr', 'Net / Hr', 'num'),
+    ].join('')}</tr>`;
+
+    const body = out.map(({ r, e }) => {
+      const exp = S.exp === r.slug;
+      const lp = f1(bPct(r.implied_low_usd));
+      const hp = bPct(r.implied_high_usd);
+      const mp = f1(bPct(r.implied_value_usd));
+      const wp = f1(Math.max(4, hp - Number(lp)));
+      const note = e.verdict === 'MARGINAL' && r.tvl_usd >= 1e9 ? 'capped $25k vs whale TVL'
+        : `fee ${usd(e.total_fees_usd)} · ${usd(e.deposit_usd)}`;
+      const sib = r.sibling_symbol ? ` ${bdg('bx', `SIB:${esc(r.sibling_symbol)}`)}` : '';
+      const g7c = r.change_7d == null ? '' : r.change_7d >= 0 ? 'pos' : 'neg';
+      const hrc = e.net_per_hour >= cal.farm_hourly_hurdle && e.verdict === 'FARM' ? 'pos' : '';
+      const row = tr([
+        td(`<button class="exp-btn" data-exp="${esc(r.slug)}">${exp ? '−' : '+'}</button> <b>${r.rank}</b>` +
+          `<span class="rng">${r.rank_low}–${r.rank_high}</span>`, 'mono'),
+        td(`<div class="pname">${esc(r.name)} ${tBdg(r.tier)}${sib}</div>` +
+          `<div class="pmeta">${esc(r.category || 'Uncat')} · ${esc(e.best_chain)} (${esc(e.family_label)})</div>`),
+        tdN(usd(r.tvl_usd)), tdN(pct(r.change_7d), g7c), tdN(ageS(r.age_days)),
+        tdN(`${p1(r.launch_odds)}<div class="pbar"><div class="pfill" style="width:${p1(r.launch_odds)}"></div></div>`),
+        tdN(usd(r.value_if_launched_usd)),
+        tdN(`<b>${usd(r.implied_value_usd)}</b><span class="rng">${usd(r.implied_low_usd)}–${usd(r.implied_high_usd)}</span>` +
+          `<div class="rbar"><div class="rrange" style="left:${lp}%;width:${wp}%"></div><div class="rmark" style="left:${mp}%"></div></div>`),
+        tdN(`${vBdg(e.verdict)} <span class="${e.net_of_fees_usd > 0 ? 'pos' : 'neg'}">${sUsd(e.net_of_fees_usd)}</span>` +
+          `<span class="rng">${note}</span>`),
+        tdN(`<b class="${hrc}">$${f1(e.net_per_hour)}/h</b><span class="rng">${f1(e.total_hours)}h / ${e.horizon_weeks}w</span>`),
+      ], ` class="row-main${exp ? ' row-exp' : ''}" data-slug="${esc(r.slug)}"`);
+      return exp ? row + renderExp(r) : row;
+    }).join('');
+
+    const vb = (v, c, lb) => `<button class="btn ${c}${S.verdict === v ? ' on' : ''}" data-verdict="${v}">${lb}</button>`;
+    return [
+      '<div class="kpi-row">',
+      kpi('Universe Accounted', `${L.total} / ${L.total}`,
+        `${sum.board_size} pre-token · ${L.priced_comps} comps · ${D.set_aside.length} set aside`),
+      kpi('Board Implied Total', usd(sum.total_implied_usd),
+        `${sum.board_size} ranked · ${usd(sum.total_board_tvl_usd)} TVL · 200x bootstrap`),
+      kpi('Stage 1 · Value OOS', `×${f2(pm.wf_miss)} WF`,
+        `LOO ×${f2(pm.loo_miss)} vs ×${f2(pm.flat_wf_miss)} flat median`),
+      kpi('Stage 2 · Odds OOS', `${f3(om.cv10_brier)} Brier`,
+        `10F ${p0(om.cv10_acc)} · WF ${p0(om.wf_acc)} (legacy + 6 sectors)`),
+      kpi('Farmable ($25/h · 2% Carry)', `${farmN} FARM`,
+        `${margN} marg · ${skipN} skip · Model & Audit tab`, 'pos'),
+      '</div><div class="trust-row">',
+      card(`MECE Universe (${L.total}/${L.total})`, `${sum.board_size} ranked`, mece),
+      card('Live Browser Refit, Ablations &amp; Parity',
+        isDef() ? '185 rows = board.json' : 'Live Repriced Scenario', `<div class="pills">${pills}</div>`),
+      '</div><div class="toolbar"><div class="grp"><span class="lbl-s">Verdict</span>',
+      vb('all', '', `All (${rows.length})`) + vb('FARM', 'g', `FARM (${farmN})`) +
+        vb('MARGINAL', 'a', `MARG (${margN})`) + vb('SKIP', 'r', `SKIP (${skipN})`),
+      `<select id="f-tier">${opt('all', `All Tiers (${rows.length})`, S.tier === 'all')}` +
+        opt('watchlist', `WL (${sum.watchlist_size})`, S.tier === 'watchlist') +
+        opt('large-cap', `LC (${sum.large_cap_size})`, S.tier === 'large-cap') +
+        opt('early', `Early (${sum.early_size})`, S.tier === 'early') + '</select>',
+      `<select id="f-cat">${opt('all', `All Cats (${cats.length})`, S.cat === 'all')}` +
+        `${cats.map((c) => opt(c, esc(c), S.cat === c)).join('')}</select>`,
+      `<select id="f-chain">${opt('all', `All Chains (${chains.length})`, S.chain === 'all')}` +
+        `${chains.map((c) => opt(c, esc(c), S.chain === c)).join('')}</select>`,
+      `<input id="f-q" type="search" value="${esc(S.q)}" placeholder="Filter protocol..." /></div><div class="grp">`,
+      `<select id="s-dep">${opt(0, 'Plan Deposit (0.02%)', S.dep === 0)}` +
+        `${[2500, 5000, 10000, 25000, 50000].map((v) => opt(v, usd(v), S.dep === v)).join('')}</select>`,
+      `<span class="lbl-s">Drop ${p0(S.drop)}</span>` +
+        `<input id="s-drop" type="range" min="3" max="15" step="1" value="${Math.round(S.drop * 100)}" />`,
+      `<span class="lbl-s">${S.wk}wk</span>` +
+        `<input id="s-wk" type="range" min="4" max="24" step="2" value="${S.wk}" />`,
+      '<button class="btn" id="b-rst">Reset</button><button class="btn" id="b-csv">CSV</button>' +
+        '<button class="btn" id="b-json">JSON</button></div></div>',
+      `<div class="tbl-wrap"><table class="tbl"><thead>${head}</thead><tbody>` +
+        `${body || '<tr><td colspan="10" style="padding:18px;text-align:center">No matching protocols.</td></tr>'}` +
+        '</tbody></table></div>',
+      `<div class="foot-note"><span>Showing ${out.length} ranked · Click [+] for equations + 8 steps, or row for Dossier` +
+        `</span><span>Snapshot ${esc(D.as_of)} · Offline</span></div>`,
     ].join('');
-    const seL = [
-      `<div class="subline"><b>Price:</b> α=${d2(pm.intercept)}±${d2(pm.intercept_se)}, β=${d2(pm.beta_tvl)}±${d2(pm.beta_tvl_se)}</div>`,
-      `<div class="subline"><b>Odds:</b> age +${d2(om.beta_age)}±${d2(om.beta_age_se)}, leg +${d2(om.beta_legacy)}±${d2(om.beta_legacy_se)}</div>`,
+  }
+
+  function renderAudit() {
+    const s1 = pm.ablation.map((a) => tr([
+      td(esc(a.step)), tdN(`×${f2(a.loo_miss)}`), tdN(`×${f2(a.wf_miss)}`),
+      tdN(`${p0(a.loo_w3x)} / ${p0(a.wf_w3x)}`), td(stTxt(a.status), stCls(a.status)),
+    ])).join('');
+    const s2 = om.ablation.map((a) => tr([
+      td(esc(a.step)), tdN(f3(a.cv10_brier)), tdN(f3(a.wf_brier)),
+      tdN(`${p1(a.cv10_acc)} / ${p1(a.wf_acc)}`), td(stTxt(a.status), stCls(a.status)),
+    ])).join('');
+    const cov = [
+      tr([td('Within ×3 error'), tdN('—'), tdN(p0(pm.within3x_loo)), tdN(p0(pm.within3x_wf))]),
+      tr([td('Inside P25–P75'), tdN('50%'), tdN(p0(pm.cov50_loo)), tdN(p0(pm.cov50_wf))]),
+      tr([td('Inside P10–P90'), tdN('80%'), tdN(p0(pm.cov80_loo)), tdN(p0(pm.cov80_wf))]),
     ].join('');
-    const bt = (cls, attr, lb) => `<button class="btn${cls ? ` ${cls}` : ''}" ${attr}>${lb}</button>`;
-    const vb = (v, cls, lb) => bt(`${cls}${st.verdict === v ? ' on' : ''}`.trim(), `data-verdict="${v}"`, lb);
-    const tb = (id, lb) => bt(st.tab === id ? 'on' : '', `data-tab="${id}"`, lb);
-    const fnTag = (f) => `<span class="fn">${f}()</span>`;
-    const sel = (id, all, arr, cur) => `<select id="${id}"><option value="all">${all}</option>${arr.map((c) => `<option${cur === c ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
-    const meceB = `<div class="mece-bar">${segs.map(([, n, col]) => `<div style="width:${(n / L.total) * 100}%;background:${col}"></div>`).join('')}</div>`;
-    const meceL = `<div class="mece-leg">${segs.map(([lb, n, col]) => `<span><i class="dot" style="background:${col}"></i>${lb} <b class="mono">${n}</b></span>`).join('')}</div>`;
-    const subTxt = `${esc(D.as_of)} · WL ≥ ${fmtU(D.floor_usd)} · Early ≥ $5M · Refitted in browser (not advice)`;
-    const scLeg = '<span style="color:#38bdf8">●</span> Live <span style="color:#a78bfa">●</span> Board <span style="color:#22c55e">—</span> Fit';
+    const c6 = D.live_comparables.slice().sort((a, b) => b.tvl_usd - a.tvl_usd).slice(0, 6).map((c) => tr([
+      td(`<b>${esc(c.symbol)}</b> ${esc(c.name)}`), td(esc(c.category)),
+      tdN(usd(c.tvl_usd)), tdN(usd(c.loo_pred_usd)), tdN(`<b>${usd(c.mcap_usd)}</b>`),
+      tdN(mBdg(c.loo_miss, c.loo_dir)),
+    ])).join('');
+    const a6 = D.set_aside.slice(0, 6).map((x) => tr([
+      td(`<b>${esc(x.name)}</b>`), td(esc(x.category)), tdN(usd(x.tvl_usd)), td(bdg('bx', esc(x.reason))),
+    ])).join('');
 
     return [
-      '<div class="wrap"><div class="hdr"><div class="brand"><h1>Token Radar</h1>',
-      `<span class="ver">${esc(D.model_version)} · ${esc(C.board_checksum)}</span><span class="sub">${subTxt}</span></div>`,
-      `<div class="tabs">${tb('board', `Board (${rows.length})`)}${tb('comps', `Comps (${D.live_comparables.length})`)}${tb('aside', `Aside (${D.set_aside.length})`)}</div></div>`,
-      '<div class="hero-top"><div class="kpis">',
-      kpi('Universe', `${L.total}/${L.total}`, `${S.board_size} pre · ${L.priced_comps} comps · ${D.set_aside.length} aside`),
-      kpi('Implied Total', fmtU(S.total_implied_usd), `${S.board_size} ranked · ${fmtU(S.total_board_tvl_usd)} TVL`),
-      kpi('Stage 1 OOS', `×${d2(pm.wf_miss)} WF`, `LOO ×${d2(pm.loo_miss)} vs ×${d2(pm.flat_wf_miss)} flat`),
-      kpi('Stage 2 OOS', `${om.cv10_brier.toFixed(3)} Brier`, `10F ${p0(om.cv10_acc)} · WF ${p0(om.wf_acc)}`),
-      kpi('Farm ($25/h)', `${fN} FARM`, `${mN} marg · ${sN} skip (2% carry)`, 'pos'),
-      kpi('Bootstrap', `${C.n_bootstrap}x`, `${S.watchlist_size}/${S.watchlist_size} WL · med ${fmtU(S.median_implied_usd)}`),
-      `</div>${card(`Value vs TVL (${pm.n_comps} Comps)`, scLeg, scatterSvg(null, 110))}</div>`,
-      `<div class="eq-strip"><span><b>Implied</b> = ${fnTag('fitStage1Huber')} <span class="mono">$100M×${Math.exp(pm.intercept).toFixed(3)}×(TVL/$100M)^${pm.beta_tvl.toFixed(3)}×e^(cat)</span>`,
-      ` × ${fnTag('fitStage2Logistic')} <span class="mono">P(Age,Leg,Sec,TVL,7d)</span></span>`,
-      `<span class="grp">${fnTag('runValueAblation')}${fnTag('runOddsAblation')}${fnTag('buildFarmTicket')}</span></div>`,
-      `<div class="bar-row">${card(`MECE (${L.total}/${L.total})`, `${S.board_size} ranked`, meceB + meceL)}${card('Browser Refit, Ablations & Parity', isDef() ? '185 rows = board.json' : `${st.dep ? fmtU(st.dep) : 'Plan'} · ${p0(st.drop)} · ${st.wk}w`, `<div class="pills">${pillsH}</div>`)}</div>`,
-      '<div class="ev-grid">',
-      card('Stage 1 · Value', `WF ≥ ${esc(pm.wf_cutoff)}`, tbl('mt', ['Spec', '#LOO', '#WF', '#≤3×', 'Gate'], abl1)),
-      card('Stage 2 · Odds', `WF ≥ ${esc(om.wf_cutoff)}`, tbl('mt', ['Spec', '#10F', '#WF', '#Acc', 'Gate'], abl2)),
-      card(`Bands & s.e. (${C.n_bootstrap}x)`, 'P25–75 / P10–90', tbl('mt', ['Cov', '#Nom', '#LOO', '#WF'], covR) + seL),
-      '</div><div class="toolbar"><div class="grp"><span class="lbl-s">Verdict</span>',
-      vb('all', '', `All (${rows.length})`) + vb('FARM', 'g', `FARM (${fN})`) + vb('MARGINAL', 'a', `MARG (${mN})`) + vb('SKIP', 'r', `SKIP (${sN})`),
-      `<select id="f-tier"><option value="all">Tiers (${rows.length})</option><option value="watchlist"${st.tier === 'watchlist' ? ' selected' : ''}>WL (${S.watchlist_size})</option><option value="large-cap"${st.tier === 'large-cap' ? ' selected' : ''}>LC (${S.large_cap_size})</option><option value="early"${st.tier === 'early' ? ' selected' : ''}>Early (${S.early_size})</option></select>`,
-      sel('f-cat', `Cats (${cats.length})`, cats, st.cat) + sel('f-chain', `Chains (${topCh.length})`, topCh, st.chain),
-      `<input id="f-q" type="search" value="${esc(st.q)}" placeholder="Filter..." /></div><div class="grp">`,
-      `<select id="s-dep"><option value="0"${st.dep === 0 ? ' selected' : ''}>Plan</option>${[2500, 5000, 10000, 25000, 50000].map((v) => `<option value="${v}"${st.dep === v ? ' selected' : ''}>${fmtU(v)}</option>`).join('')}</select>`,
-      `<span class="lbl-s">Drop ${p0(st.drop)}</span><input id="s-drop" type="range" min="3" max="15" step="1" value="${Math.round(st.drop * 100)}" />`,
-      `<span class="lbl-s">${st.wk}w</span><input id="s-wk" type="range" min="4" max="24" step="2" value="${st.wk}" />`,
-      `${bt('', 'id="b-rst"', 'Reset')}${bt('', 'id="b-csv"', 'CSV')}${bt('', 'id="b-json"', 'JSON')}</div></div>`,
-      `<div class="tbl-wrap"><table class="tbl"><thead>${hH}</thead><tbody>${bH || '<tr><td colspan="10" style="padding:16px;text-align:center">No matches.</td></tr>'}</tbody></table></div>`,
-      `<div class="fn-note"><span>Showing ${nShown} rows · [+] inline eq + steps · row for dossier</span><span>${esc(D.as_of)} · Offline</span></div></div>`,
+      '<div class="eq-strip"><span><b>Implied Value</b> = <span class="fn">fitStage1Huber()</span> ' +
+        `<span class="mono">$100M×${f3(Math.exp(pm.intercept))}×(TVL/$100M)^${f3(pm.beta_tvl)}` +
+        '×e^(cat_k64)</span> × <span class="fn">fitStage2Logistic()</span> ' +
+        '<span class="mono">P(Age,Legacy,Sector,TVL,7d)</span></span>' +
+        '<span class="grp"><span class="fn">runValueAblation()</span><span class="fn">runOddsAblation()</span>' +
+        '<span class="fn">repriceFarmScenario()</span><span class="fn">verifyBoardParity()</span></span></div>',
+      '<div class="audit-top">',
+      card(`Log-Log Valuation Curve (${pm.n_comps} Live Comps &amp; ${sum.board_size} Board)`,
+        '<span style="color:#38bdf8">●</span> Comps <span style="color:#a78bfa">●</span> Board ' +
+          '<span style="color:#22c55e">—</span> Huber + P25–75', scatterSvg(null, 185)),
+      card(`Conformal Band Honesty &amp; ${cal.n_bootstrap}× Bootstrap s.e.`, 'Out-of-sample verified',
+        tbl('mini-tbl', ['Coverage Target', '#Nominal', '#LOO', '#WF'], cov) +
+        `<div class="subline"><b>Stage 1 Huber (k=${pm.cat_ridge_k}):</b> α=${f3(pm.intercept)}±${f3(pm.intercept_se)}, ` +
+        `β_tvl=${f3(pm.beta_tvl)}±${f3(pm.beta_tvl_se)}, cat [${f3(pm.cat_adj_min)}, +${f3(pm.cat_adj_max)}]</div>` +
+        `<div class="subline"><b>Stage 2 Logit (λ=1.5):</b> age +${f3(om.beta_age)}±${f3(om.beta_age_se)}, ` +
+        `leg +${f3(om.beta_legacy)}±${f3(om.beta_legacy_se)}, tvl ${f3(om.beta_tvl)}±${f3(om.beta_tvl_se)}, ` +
+        `7d ${f3(om.beta_g7d)}±${f3(om.beta_g7d_se)}</div><div class="subline pos"><b>Browser Refit Parity:</b> ` +
+        `All ${rows.length}/${rows.length} rows &amp; ablations match main.ts (CRC ${esc(par.checksum)}).</div>`),
+      '</div><div class="audit-two">',
+      card(`Stage 1 · Value if Launched Ablation (n=${pm.n_comps} Comps)`, `WF >= ${esc(pm.wf_cutoff)}`,
+        tbl('mini-tbl', ['Specification', '#LOO Med', '#WF Med', '#LOO / WF <=3x', 'Gate'], s1)),
+      card(`Stage 2 · Conditional Launch Odds Ablation (n=${om.n_peers} Peers)`, `WF >= ${esc(om.wf_cutoff)}`,
+        tbl('mini-tbl', ['Feature Set', '#10F Brier', '#WF Brier', '#10F / WF Acc', 'Gate'], s2)),
+      '</div><div class="audit-two">',
+      card(`Top Live Comps by TVL (${D.live_comparables.length} Peers · Blind LOO)`,
+        `<button class="exp-btn" data-tab="comps">View All ${D.live_comparables.length} Comps →</button>`,
+        tbl('mini-tbl', ['Protocol', 'Category', '#TVL', '#Blind LOO', '#Live MCap', '#Error'], c6)),
+      card(`Sample Set-Aside Exclusions (${D.set_aside.length} MECE Non-Candidates)`,
+        `<button class="exp-btn" data-tab="aside">View All ${D.set_aside.length} Excluded →</button>`,
+        tbl('mini-tbl', ['Protocol', 'Category', '#TVL', 'MECE Exclusion Reason'], a6)),
+      '</div>',
     ].join('');
+  }
+
+  function renderComps() {
+    const ql = S.q.trim().toLowerCase();
+    const list = D.live_comparables.filter((c) => !ql || `${c.name} ${c.symbol} ${c.category}`.toLowerCase().includes(ql));
+    const body = list.map((c) => tr([
+      td(`<b>${esc(c.symbol)}</b>`, 'mono'),
+      td(`<div class="pname">${esc(c.name)}</div><div class="pmeta">${esc(c.category)} · ${esc(c.chains.slice(0, 3).join(', '))}</div>`),
+      tdN(usd(c.tvl_usd)), tdN(pct(c.change_7d), c.change_7d == null ? '' : c.change_7d >= 0 ? 'pos' : 'neg'),
+      tdN(ageS(c.age_days)), tdN(`${f2(c.ratio)}×`), tdN(usd(c.loo_pred_usd)),
+      tdN(`<b>${usd(c.mcap_usd)}</b>`), tdN(mBdg(c.loo_miss)), tdN(c.loo_dir),
+    ])).join('');
+    return filterToolbar('Clean Traded Comps (mcap_usd &gt; 0)', 'Filter comps...', `Showing ${list.length} / ${D.live_comparables.length}`) +
+      `<div class="tbl-wrap">${tbl('tbl', ['Symbol', 'Protocol · Category · Chains', '#TVL', '#7d', '#Age',
+        '#MCap/TVL', '#Blind LOO', '#Live MCap', '#Miss', '#Dir'], body)}</div>`;
+  }
+
+  function renderAside() {
+    const ql = S.q.trim().toLowerCase();
+    const list = D.set_aside.filter((x) => !ql || `${x.name} ${x.slug} ${x.category} ${x.reason}`.toLowerCase().includes(ql));
+    const body = list.map((x) => tr([
+      td(esc(x.slug), 'mono'), td(esc(x.name), 'pname'), td(esc(x.category)),
+      tdN(usd(x.tvl_usd)), td(bdg('bx', esc(x.reason))),
+    ])).join('');
+    return filterToolbar('MECE Excluded Tokenless Protocols', 'Filter excluded...', `Showing ${list.length} / ${D.set_aside.length}`) +
+      `<div class="tbl-wrap">${tbl('tbl', ['Slug', 'Protocol', 'Category', '#TVL', 'MECE Exclusion Reason'], body)}</div>`;
   }
 
   function renderDetail(slug) {
-    const idx = rows.findIndex((r) => r.slug === slug), r = rows[idx >= 0 ? idx : 0];
-    const e = M.buildFarmTicket(r, C, st.dep > 0 ? st.dep : null, st.drop, st.wk), pm = C.price_model, om = C.odds_model;
-    const cat = r.category || 'Uncategorized', ev = M.evaluateProtocol(r, V.pFit, V.oFit, C);
+    const idx = rows.findIndex((r) => r.slug === slug);
+    const r = rows[idx >= 0 ? idx : 0];
+    const e = getEcon(r);
+    const cat = r.category || 'Uncategorized';
+    const ev = M.evaluateProtocol(r, par.pFit, par.oFit, cal);
     const shocks = [
-      [`TVL −30% (${fmtU(r.tvl_usd * 0.7)})`, M.evaluateProtocol({ ...r, tvl_usd: r.tvl_usd * 0.7 }, V.pFit, V.oFit, C)],
-      ['7d Growth Reset to 0%', M.evaluateProtocol({ ...r, change_7d: 0 }, V.pFit, V.oFit, C)],
-      ['+6 Months Older Tokenless', M.evaluateProtocol({ ...r, age_days: (r.age_days == null ? om.median_age_years * 365 : r.age_days) + 182 }, V.pFit, V.oFit, C)],
-    ].map(([lb, s]) => `<tr><td>${lb}</td>${tdN(p1(s.launchOdds))}${tdN(fmtU(s.implied))}${tdN(fmtP(((s.implied / r.implied_value_usd) - 1) * 100), s.implied < r.implied_value_usd ? 'neg' : '')}</tr>`).join('');
+      [`TVL −30% (${usd(r.tvl_usd * 0.7)})`, M.evaluateProtocol({ ...r, tvl_usd: r.tvl_usd * 0.7 }, par.pFit, par.oFit, cal)],
+      ['7d Growth Reset to 0%', M.evaluateProtocol({ ...r, change_7d: 0 }, par.pFit, par.oFit, cal)],
+      ['+6 Months Older Tokenless', M.evaluateProtocol(
+        { ...r, age_days: (r.age_days == null ? om.median_age_years * 365 : r.age_days) + 182 }, par.pFit, par.oFit, cal)],
+    ].map(([lb, s]) => tr([
+      td(lb), tdN(p1(s.launchOdds)), tdN(usd(s.implied)),
+      tdN(pct(((s.implied / r.implied_value_usd) - 1) * 100), s.implied < r.implied_value_usd ? 'neg' : ''),
+    ])).join('');
+
     const peers = D.live_comparables.slice().sort((a, b) =>
       ((a.category || 'Uncat') === cat ? 0 : 1) - ((b.category || 'Uncat') === cat ? 0 : 1) ||
-      Math.abs(Math.log(a.tvl_usd / r.tvl_usd)) - Math.abs(Math.log(b.tvl_usd / r.tvl_usd)),
-    ).slice(0, 6);
-    const deps = [2500, 10000, 25000];
-    if (!deps.includes(e.deposit_usd)) deps[1] = e.deposit_usd;
-    deps.sort((a, b) => a - b);
-    const mxHtml = [0.05, 0.1, 0.15].map((ds) => `<tr><td>${p0(ds)}</td>${deps.map((dp) => {
-      const net = round2(r.implied_value_usd * ds * (dp / (r.tvl_usd + dp)) - e.total_fees_usd);
-      const h = round2(dp * C.tbill_apr * (e.horizon_weeks / 52));
-      return `<td class="${net > h && net / Math.max(0.25, e.total_hours) >= C.farm_hourly_hurdle ? 'pos' : net > 0 ? '' : 'neg'}">${fmtS(net)}</td>`;
-    }).join('')}</tr>`).join('');
-    const wkS = [4, 8, 12, 24].map((w) => {
-      const t = M.buildFarmTicket(r, C, e.deposit_usd, e.drop_share, w);
-      return `<span>${w}w:<b class="${t.verdict === 'FARM' ? 'pos' : t.net_of_fees_usd > 0 ? '' : 'neg'}">${fmtS(t.net_of_fees_usd)}</b> ($${t.net_per_hour.toFixed(0)}/h)</span>`;
+      Math.abs(Math.log(a.tvl_usd / r.tvl_usd)) - Math.abs(Math.log(b.tvl_usd / r.tvl_usd))).slice(0, 6);
+    const dCols = [2500, 10000, 25000];
+    if (!dCols.includes(e.deposit_usd)) dCols[1] = e.deposit_usd;
+    dCols.sort((a, b) => a - b);
+
+    const mxRows = [0.05, 0.10, 0.15].map((ds) => tr([td(`${p0(ds)} drop`), ...dCols.map((dp) => {
+      const net = r2(r.implied_value_usd * ds * (dp / (r.tvl_usd + dp)) - e.total_fees_usd);
+      const hurdle = r2(dp * cal.tbill_apr * (e.horizon_weeks / 52));
+      const cls = net > hurdle && net / Math.max(0.25, e.total_hours) >= cal.farm_hourly_hurdle ? 'pos' : net > 0 ? '' : 'neg';
+      return td(sUsd(net), cls);
+    })])).join('');
+    const wkSens = [4, 8, 12, 24].map((wk) => {
+      const a = M.repriceFarmScenario(r, cal, e.deposit_usd, e.drop_share, wk);
+      return `<span>${wk}w: <b class="${a.verdict === 'FARM' ? 'pos' : a.net_of_fees_usd > 0 ? '' : 'neg'}">` +
+        `${sUsd(a.net_of_fees_usd)}</b> ($${a.net_per_hour.toFixed(0)}/h)</span>`;
     }).join(' · ');
-    const prevS = rows[(idx - 1 + rows.length) % rows.length].slug, nextS = rows[(idx + 1) % rows.length].slug;
+    const pSlug = rows[(idx - 1 + rows.length) % rows.length].slug;
+    const nSlug = rows[(idx + 1) % rows.length].slug;
+
     const eqBox = [
-      eqLn(`Base @ $100M (exp(${pm.intercept.toFixed(3)}))`, `×${ev.baseMult.toFixed(3)}`),
-      eqLn(`Size ((TVL/$100M)^${pm.beta_tvl.toFixed(3)})`, `×${ev.sizeMult.toFixed(3)}`),
-      eqLn(`Category (${esc(cat)}, k=${pm.cat_ridge_k})`, `×${ev.catMult.toFixed(3)}`),
-      eqLn('= If launched', fmtU(r.value_if_launched_usd), 'tot'),
-      eqLn(`× Odds (P ${p0(ev.pNow)}→${p0(ev.pMax)}${r.sibling_symbol ? ' ×0.5' : ''})`, `${d2(r.launch_odds * 100)}%`),
-      eqLn(`= Implied (#${r.rank} ${r.rank_low}–${r.rank_high})`, fmtU(r.implied_value_usd), 'tot'),
+      eqRow(`Base @ $100M TVL (exp(${f3(pm.intercept)}))`, `×${f3(ev.baseMult)}`),
+      eqRow(`Size ((TVL/$100M)^${f3(pm.beta_tvl)})`, `×${f3(ev.sizeMult)}`),
+      eqRow(`Category (${esc(cat)}, k=${pm.cat_ridge_k})`, `×${f3(ev.catMult)}`),
+      eqRow('= Value if launched', usd(r.value_if_launched_usd), 'tot'),
+      eqRow(`× Odds (P ${p0(ev.pNow)} → ${p0(ev.pMax)}${r.sibling_symbol ? ' × 0.5' : ''})`, `${f2(r.launch_odds * 100)}%`),
+      eqRow(`= Implied Value (rank ${r.rank_low}–${r.rank_high})`, usd(r.implied_value_usd), 'tot'),
     ].join('');
-    const pRows = peers.map((p) =>
-      `<tr><td><b>${esc(p.name)}</b> <span class="pmeta">${esc(p.symbol)}</span></td><td>${esc(p.category || '-')}</td>` +
-      `${tdN(fmtU(p.tvl_usd))}${tdN(fmtU(p.mcap_usd))}${tdN(fmtU(p.loo_pred_usd))}${tdN(bdg(p.loo_miss <= 3 ? 'b-farm' : 'b-marg', `×${d2(p.loo_miss)} ${p.loo_dir}`))}</tr>`,
-    ).join('');
-    const verCls = e.verdict === 'FARM' ? '' : e.verdict === 'MARGINAL' ? 'marg' : 'skip';
-    const verBox = `<div class="ver-box ${verCls}"><b>${e.verdict}:</b> ${fmtU(e.deposit_usd)} / ${e.horizon_weeks}w yields ${fmtU(e.modelled_drop_usd)} (${p0(e.drop_share)}) minus ${fmtU(e.total_fees_usd)} fees &amp; ${d1(e.total_hours)}h = <b>${fmtS(e.net_of_fees_usd)} ($${d1(e.net_per_hour)}/h)</b> vs ${fmtU(e.tbill_hurdle_usd)} 2% carry.</div>`;
-    const ecGrid = [
-      '<div class="econ-6">',
-      ecBox('Deposit', fmtU(e.deposit_usd)), ecBox('Drop', fmtU(e.modelled_drop_usd)), ecBox('Fees', fmtU(e.total_fees_usd)),
-      ecBox('Net vs 2%', fmtS(e.net_of_fees_usd), e.net_of_fees_usd > e.tbill_hurdle_usd ? 'pos' : 'neg'),
-      ecBox(`Net/Hr (${d1(e.total_hours)}h)`, `$${d2(e.net_per_hour)}/h`, e.net_per_hour >= C.farm_hourly_hurdle ? 'pos' : ''),
-      ecBox('BE Share/Odds', `${d2(e.break_even_drop_share * 100)}% / ${p1(e.break_even_odds)}`),
-      '</div>',
-    ].join('');
-    const exBox = `<div class="exit-box"><b>Exit:</b> Withdraw if TVL &lt; <b class="mono">${fmtU(e.exit_tvl_usd)}</b> (${d1(C.snapshot_7d_p05)}% P05). Risk: ${esc((r.farm_econ.risk_tags || []).join(' · '))}.</div>`;
-    const stRows = e.items.map((it) => `<tr><td><span class="ph">${esc(it.phase)}</span></td><td>${esc(it.action)}</td><td class="ct">${esc(it.cost_label)}<br/>${esc(it.time_label)}</td></tr>`).join('');
-    const stTbl = `<div class="ctitle mt4"><span>8 Steps (${e.total_minutes}m / ${e.horizon_weeks}w)</span><span class="mono">buildFarmTicket()</span></div><table class="st"><tbody>${stRows}</tbody></table>`;
+    const pRows = peers.map((p) => tr([
+      td(`<b>${esc(p.name)}</b> <span class="pmeta">${esc(p.symbol)}</span>`), td(esc(p.category || '-')),
+      tdN(usd(p.tvl_usd)), tdN(usd(p.mcap_usd)), tdN(usd(p.loo_pred_usd)), tdN(mBdg(p.loo_miss, p.loo_dir)),
+    ])).join('');
+    const vCls = e.verdict === 'FARM' ? '' : e.verdict === 'MARGINAL' ? 'marg' : 'skip';
+    const vBan = `<div class="ver-box ${vCls}"><b>${e.verdict}:</b> ${usd(e.deposit_usd)} for ${e.horizon_weeks}wk ` +
+      `yields a modelled ${usd(e.modelled_drop_usd)} (${p0(e.drop_share)}) minus ${usd(e.total_fees_usd)} fees ` +
+      `&amp; ${f1(e.total_hours)}h = <b>${sUsd(e.net_of_fees_usd)} ($${f1(e.net_per_hour)}/h)</b> ` +
+      `vs ${usd(e.tbill_hurdle_usd)} 2% carry.</div>`;
+    const ecGrid = `<div class="econ-6">${ecBox('Plan Deposit', usd(e.deposit_usd))}` +
+      `${ecBox('Modelled Drop', usd(e.modelled_drop_usd))}${ecBox('Gas &amp; Ops Fees', usd(e.total_fees_usd))}` +
+      `${ecBox('Net vs 2% Carry', sUsd(e.net_of_fees_usd), e.net_of_fees_usd > e.tbill_hurdle_usd ? 'pos' : 'neg')}` +
+      `${ecBox(`Net / Hr (${f1(e.total_hours)}h)`, `$${f2(e.net_per_hour)}/h`,
+        e.net_per_hour >= cal.farm_hourly_hurdle ? 'pos' : '')}` +
+      `${ecBox('BE Share / Odds', `${f2(e.break_even_drop_share * 100)}% / ${p1(e.break_even_odds)}`)}</div>`;
+    const exBan = `<div class="exit-box"><b>Exit Trigger:</b> Withdraw if TVL drops below ` +
+      `<b class="mono">${usd(e.exit_tvl_usd)}</b> (${f1(cal.snapshot_7d_p05)}% P05 stress). ` +
+      `Risk: ${esc((r.farm_econ.risk_tags || []).join(' · '))}.</div>`;
 
     return [
-      `<div class="wrap"><div class="hdr"><div class="brand"><button class="btn" id="b-back">← Board</button><span class="ver">#${r.rank} (${r.rank_low}–${r.rank_high})</span><h1>${esc(r.name)}</h1>`,
-      `<span class="sub">${esc(cat)} · ${esc(r.chains.join(', '))} · ${esc(r.farm_econ.epistemic_tier)}</span>${r.sibling_symbol ? bdg('b-warn', `SIB ${esc(r.sibling_symbol)} 0.5×`) : ''}</div>`,
-      `<div class="grp">${bdg(`${e.verdict === 'FARM' ? 'b-farm' : e.verdict === 'MARGINAL' ? 'b-marg' : 'b-skip'} hvb`, `${e.verdict} · ${fmtS(e.net_of_fees_usd)} ($${d1(e.net_per_hour)}/h)`)}<button class="btn" data-nav="${esc(prevS)}">◀ Prev</button><button class="btn" data-nav="${esc(nextS)}">Next ▶</button></div></div>`,
-      `<div class="det-top"><div class="hero-val"><div class="ctitle"><span>Implied Value · Browser Refit</span><span class="mono">TVL ${fmtU(r.tvl_usd)} · 7d ${fmtP(r.change_7d)} · Age ${fmtA(r.age_days)}</span></div>`,
-      `<div class="hv-flex"><div class="hv-num">${fmtU(r.implied_value_usd)}</div><div class="mono" style="font-size:11px">Launched <b>${fmtU(r.value_if_launched_usd)}</b> · Odds <b>${p1(r.launch_odds)}</b> · P25–75 <b>${fmtU(r.implied_low_usd)}–${fmtU(r.implied_high_usd)}</b> · P10–90 <b>${fmtU(r.implied_p10_usd)}–${fmtU(r.implied_p90_usd)}</b></div></div>`,
-      `<div class="subline pos">✓ Refitted fitStage1Huber() + fitStage2Logistic() = board.json (CRC ${esc(V.checksum)}). Not financial advice.</div></div>`,
-      `${card('Curve vs Comps', `<span style="color:#f59e0b">●</span> ${esc(r.name)}`, scatterSvg(r, 76))}</div>`,
+      `<div class="hdr"><div class="brand"><button class="btn" id="b-back">← Board</button>` +
+        `<span class="ver">#${r.rank} (${r.rank_low}–${r.rank_high})</span><h1>${esc(r.name)}</h1>` +
+        `<span class="sub">${esc(cat)} · ${esc(r.chains.join(', '))} · ${esc(r.farm_econ.epistemic_tier)}</span></div>` +
+        `<div class="grp"><span class="bdg ${e.verdict === 'FARM' ? 'bf' : e.verdict === 'MARGINAL' ? 'bm' : 'bs'}" ` +
+        `style="font-size:11.5px;padding:4px 9px">${e.verdict} · ${sUsd(e.net_of_fees_usd)} ($${f1(e.net_per_hour)}/h)</span>` +
+        `<button class="btn" data-nav="${esc(pSlug)}">◀ Prev</button><button class="btn" data-nav="${esc(nSlug)}">Next ▶</button></div></div>`,
+      `<div class="det-top"><div class="hero-val"><div class="ctitle"><span>Implied Valuation · Browser Refit</span>` +
+        `<span class="mono">TVL ${usd(r.tvl_usd)} · 7d ${pct(r.change_7d)} · Age ${ageS(r.age_days)}</span></div>` +
+        `<div class="hv-flex"><div class="hv-num">${usd(r.implied_value_usd)}</div>` +
+        `<div class="mono" style="font-size:11.5px">Launched <b>${usd(r.value_if_launched_usd)}</b> · Odds ` +
+        `<b>${p1(r.launch_odds)}</b> · P25–P75 <b>${usd(r.implied_low_usd)}–${usd(r.implied_high_usd)}</b> · ` +
+        `P10–P90 <b>${usd(r.implied_p10_usd)}–${usd(r.implied_p90_usd)}</b></div></div>` +
+        `<div class="subline pos">✓ Refitted live via fitStage1Huber() + fitStage2Logistic() = board.json ` +
+        `(CRC ${esc(par.checksum)}). Not financial advice.</div></div>` +
+        `${card('Curve Position vs Comps', `<span style="color:#f59e0b">●</span> ${esc(r.name)}`, scatterSvg(r, 84))}</div>`,
       '<div class="det-grid"><div class="stack">',
-      card(`How ${fmtU(r.implied_value_usd)} Follows`, 'evaluateProtocol()', `<div class="eq-box">${eqBox}</div><table class="mt mt5"><thead>${thR(['Stress Shock', '#Odds', '#Implied', '#Delta'])}</thead><tbody>${shocks}</tbody></table>`),
-      card('Nearest 6 Peers (LOO)', esc(cat), tbl('mt', ['Peer', 'Category', '#TVL', '#MCap', '#LOO', '#Miss'], pRows)),
-      card('Net Profit ($) · Deposit × Share', `Fees ${fmtU(e.total_fees_usd)}`, `<table class="mt mx"><thead><tr><th>Drop</th>${deps.map((d) => `<th>${fmtU(d)}</th>`).join('')}</tr></thead><tbody>${mxHtml}</tbody></table><div class="subline">Horizon: ${wkS}</div>`),
-      `</div><div class="stack">${card('Net-of-Fees Farm Verdict', `${esc(e.best_chain)} · ${esc(e.gas_tier)}`, verBox + ecGrid + exBox + stTbl)}</div></div></div>`,
+      card(`How ${usd(r.implied_value_usd)} Follows From Snapshot`, 'evaluateProtocol()',
+        `<div class="eq-box">${eqBox}</div>${tbl('mini-tbl', ['Stress Shock', '#Odds', '#Implied', '#Delta'], shocks)}`),
+      card('Nearest 6 Traded Peers (Blind LOO)', esc(cat),
+        tbl('mini-tbl', ['Peer', 'Category', '#TVL', '#MCap', '#LOO', '#Miss'], pRows)),
+      card('Net Profit ($) Matrix · Deposit × Drop Share', `Fees ${usd(e.total_fees_usd)}`,
+        `<table class="mini-tbl mx"><thead><tr><th>Drop</th>${dCols.map((d) => `<th>${usd(d)}</th>`).join('')}` +
+        `</tr></thead><tbody>${mxRows}</tbody></table><div class="subline">Horizon: ${wkSens}</div>`),
+      '</div><div class="stack">',
+      card('Net-of-Fees Farm Verdict &amp; Execution Plan', `${esc(e.best_chain)} · ${esc(e.gas_tier)}`,
+        vBan + ecGrid + exBan + `<div class="ctitle" style="margin-top:6px"><span>8 Costed &amp; Timed Steps ` +
+        `(${e.total_minutes}m / ${e.horizon_weeks}wk)</span><span class="mono">repriceFarmScenario()</span></div>` +
+        stepsHtml(e.items)),
+      '</div></div>',
     ].join('');
   }
 
-  function dl(name, mime, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: mime })); a.download = name; a.click(); }
+  function downloadFile(name, mime, text) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+    a.download = name;
+    a.click();
+  }
+
   const root = document.getElementById('app');
-  function renderApp() { writeHash(); root.innerHTML = st.p ? renderDetail(st.p) : renderCover(); bindEvents(); }
+  function renderApp() {
+    writeHash();
+    const inner = S.p ? renderDetail(S.p)
+      : renderHeader() + (S.tab === 'audit' ? renderAudit()
+        : S.tab === 'comps' ? renderComps()
+        : S.tab === 'aside' ? renderAside() : renderBoard());
+    root.innerHTML = `<div class="wrap">${inner}</div>`;
+    bindEvents();
+  }
 
   function bindEvents() {
-    const ba = (s, fn) => root.querySelectorAll(s).forEach((el) => el.addEventListener('click', (ev) => fn(el, ev)));
-    ba('[data-tab]', (el) => { st.tab = el.dataset.tab; st.exp = null; renderApp(); });
-    ba('[data-verdict]', (el) => { st.verdict = el.dataset.verdict; renderApp(); });
-    ba('[data-sort]', (el) => {
-      const k = el.dataset.sort;
-      if (st.sort === k) st.dir = st.dir === 'asc' ? 'desc' : 'asc';
-      else { st.sort = k; st.dir = k === 'rank' || k === 'name' || k === 'age' ? 'asc' : 'desc'; }
+    const onAll = (sel, fn) => root.querySelectorAll(sel).forEach((el) => el.addEventListener('click', (ev) => fn(el, ev)));
+    onAll('[data-tab]', (el) => { S.tab = el.dataset.tab; S.exp = null; renderApp(); window.scrollTo(0, 0); });
+    onAll('[data-verdict]', (el) => { S.verdict = el.dataset.verdict; renderApp(); });
+    onAll('[data-sort]', (el) => {
+      const col = el.dataset.sort;
+      if (S.sort === col) S.dir = S.dir === 'asc' ? 'desc' : 'asc';
+      else { S.sort = col; S.dir = col === 'rank' || col === 'name' || col === 'age' ? 'asc' : 'desc'; }
       renderApp();
     });
-    ba('[data-exp]', (el, ev) => { ev.stopPropagation(); st.exp = st.exp === el.dataset.exp ? null : el.dataset.exp; renderApp(); });
-    ba('[data-open]', (el) => { st.p = el.dataset.open; renderApp(); window.scrollTo(0, 0); });
-    ba('tr[data-slug]', (el) => { st.p = el.dataset.slug; renderApp(); window.scrollTo(0, 0); });
-    ba('[data-nav]', (el) => { st.p = el.dataset.nav; renderApp(); window.scrollTo(0, 0); });
-    const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, () => fn(el)); };
-    on('b-back', 'click', () => { st.p = null; renderApp(); });
-    on('b-rst', 'click', () => { Object.assign(st, DEF); renderApp(); });
-    on('b-csv', 'click', () => {
+    onAll('[data-exp]', (el, ev) => { ev.stopPropagation(); S.exp = S.exp === el.dataset.exp ? null : el.dataset.exp; renderApp(); });
+    onAll('[data-open]', (el) => { S.p = el.dataset.open; renderApp(); window.scrollTo(0, 0); });
+    onAll('tr[data-slug]', (el) => { S.p = el.dataset.slug; renderApp(); window.scrollTo(0, 0); });
+    onAll('[data-nav]', (el) => { S.p = el.dataset.nav; renderApp(); window.scrollTo(0, 0); });
+
+    const byId = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, () => fn(el)); };
+    byId('b-back', 'click', () => { S.p = null; renderApp(); });
+    byId('b-rst', 'click', () => { Object.assign(S, DEF); renderApp(); });
+    byId('b-csv', 'click', () => {
       const hdr = 'rank,slug,name,tier,category,tvl_usd,implied_value_usd,launch_odds,verdict,net_usd,net_hr';
-      const lines = getFiltered().flt.map(({ r, e }) => [r.rank, r.slug, JSON.stringify(r.name), r.tier, JSON.stringify(r.category || ''), r.tvl_usd, r.implied_value_usd, r.launch_odds, e.verdict, e.net_of_fees_usd, e.net_per_hour].join(','));
-      dl('token-radar-v5.csv', 'text/csv', [hdr, ...lines].join('\n'));
+      const lines = getFiltered().out.map(({ r, e }) => [
+        r.rank, r.slug, JSON.stringify(r.name), r.tier, JSON.stringify(r.category || ''),
+        r.tvl_usd, r.implied_value_usd, r.launch_odds, e.verdict, e.net_of_fees_usd, e.net_per_hour,
+      ].join(','));
+      downloadFile('token-radar-v6.csv', 'text/csv', [hdr, ...lines].join('\n'));
     });
-    on('b-json', 'click', () => dl('token-radar-v5.json', 'application/json', JSON.stringify(getFiltered().flt.map(({ r, e }) => ({ ...r, farm_econ: e })), null, 2)));
+    byId('b-json', 'click', () => downloadFile('token-radar-v6.json', 'application/json',
+      JSON.stringify(getFiltered().out.map(({ r, e }) => ({ ...r, farm_econ: e })), null, 2)));
     for (const [id, ev, fn] of [
-      ['f-tier', 'change', (el) => { st.tier = el.value; }], ['f-cat', 'change', (el) => { st.cat = el.value; }],
-      ['f-chain', 'change', (el) => { st.chain = el.value; }], ['s-dep', 'change', (el) => { st.dep = Number(el.value) || 0; }],
-      ['s-drop', 'input', (el) => { st.drop = Number(el.value) / 100; }], ['s-wk', 'input', (el) => { st.wk = Number(el.value); }],
-    ]) on(id, ev, (el) => { fn(el); renderApp(); });
-    on('f-q', 'input', (el) => { st.q = el.value; renderApp(); const nf = document.getElementById('f-q'); if (nf) { nf.focus(); nf.setSelectionRange(nf.value.length, nf.value.length); } });
+      ['f-tier', 'change', (el) => { S.tier = el.value; }], ['f-cat', 'change', (el) => { S.cat = el.value; }],
+      ['f-chain', 'change', (el) => { S.chain = el.value; }], ['s-dep', 'change', (el) => { S.dep = Number(el.value) || 0; }],
+      ['s-drop', 'input', (el) => { S.drop = Number(el.value) / 100; }], ['s-wk', 'input', (el) => { S.wk = Number(el.value); }],
+    ]) byId(id, ev, (el) => { fn(el); renderApp(); });
+    byId('f-q', 'input', (el) => {
+      S.q = el.value;
+      renderApp();
+      const nf = document.getElementById('f-q');
+      if (nf) { nf.focus(); nf.setSelectionRange(nf.value.length, nf.value.length); }
+    });
   }
 
   window.addEventListener('hashchange', () => { readHash(); renderApp(); });

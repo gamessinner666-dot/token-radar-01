@@ -20,8 +20,8 @@ const snapshotPath = resolve(repoRoot, '../competition-kit/token-radar-01-kit/in
 const snapshot = parseSnapshot(readFileSync(snapshotPath, 'utf8'));
 const { board, radar } = buildRadar(snapshot);
 
-test('radar-5 MECE ledger, set_aside, rank monotonicity, 200-bootstrap bands & s.e., and boardIssue', () => {
-  assert.equal(radar.model_version, 'radar-5');
+test('radar-6 MECE ledger, set_aside, rank monotonicity, 200-bootstrap bands & s.e., and boardIssue', () => {
+  assert.equal(radar.model_version, 'radar-6');
   assert.equal(boardIssue(board, snapshot), null);
 
   const L = radar.ledger;
@@ -65,6 +65,14 @@ test('Stage 1 & Stage 2 dual blind OOS ablations and dropped-term guardrails', (
   const droppedChain = om.ablation.find((a) => a.step.toLowerCase().includes('chain'));
   assert.ok(droppedChain && droppedChain.status === 'tested_not_kept');
   assert.ok(om.wf_brier < om.base_wf_brier);
+
+  const s1Placebo = pm.ablation.find((a) => a.step.includes('20x shuffled 7d'));
+  assert.ok(s1Placebo && s1Placebo.status === 'control');
+  assert.ok(s1Placebo.loo_miss >= pm.loo_miss && s1Placebo.wf_miss >= pm.wf_miss);
+
+  const s2Placebo = om.ablation.find((a) => a.step.includes('20x shuffled 7d'));
+  assert.ok(s2Placebo && s2Placebo.status === 'control');
+  assert.ok(s2Placebo.cv10_brier >= om.cv10_brier && s2Placebo.wf_brier >= om.wf_brier);
 });
 
 test('Domain & chain hygiene: sibling cut, underwriting pool, ETH floor, non-EVM zero leak, exact step minute sum', () => {
@@ -78,6 +86,10 @@ test('Domain & chain hygiene: sibling cut, underwriting pool, ETH floor, non-EVM
   const firelight = bySlug.get('firelight');
   assert.ok(firelight);
   assert.ok(firelight.farm_steps.some((s) => /underwriting|cover pool/i.test(s)));
+
+  const tao = bySlug.get('bittensor-dtao');
+  assert.ok(tao);
+  assert.ok(!tao.farm_steps.some((s) => /dTAO\s+dTAO/i.test(s)), 'no duplicate dTAO wording');
 
   for (const r of board) {
     assert.equal(r.farm_steps.length, 8, `${r.slug} must have 8 farm steps`);
@@ -144,7 +156,7 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
         low: number;
         high: number;
       };
-      buildFarmTicket: (r: unknown, c: unknown) => {
+      repriceFarmScenario: (r: unknown, c: unknown, dep?: number | null, ds?: number | null, wk?: number | null) => {
         deposit_usd: number;
         total_fees_usd: number;
         total_minutes: number;
@@ -169,6 +181,7 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
   assert.equal(vp.ledgerOk, true);
 
   const boardBySlug = new Map(board.map((r) => [r.slug, r]));
+  const snapBySlug = new Map(snapshot.protocols.map((p) => [p.slug, p]));
   for (const r of radar.rows) {
     const b = boardBySlug.get(r.slug)!;
     const v = model.evaluateProtocol(r, vp.pFit, vp.oFit, radar.calibration);
@@ -176,7 +189,7 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
     assert.equal(v.launchOdds, r.launch_odds, r.slug);
     assert.equal(v.implied, r.implied_value_usd, r.slug);
 
-    const ft = model.buildFarmTicket(r, radar.calibration);
+    const ft = model.repriceFarmScenario(r, radar.calibration);
     assert.equal(ft.deposit_usd, r.farm_econ.deposit_usd, r.slug);
     assert.equal(ft.total_fees_usd, r.farm_econ.total_fees_usd, r.slug);
     assert.equal(ft.total_minutes, r.farm_econ.total_minutes, r.slug);
@@ -186,10 +199,25 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
     assert.equal(ft.break_even_odds, r.farm_econ.break_even_odds, r.slug);
     assert.equal(ft.items.length, 8, r.slug);
     assert.ok(b.farm_steps.every((s, idx) => s.startsWith(`${ft.items[idx]!.phase}:`)), r.slug);
+
+    const custTs = buildFarmEconomicsAndPlan(
+      snapBySlug.get(r.slug)!,
+      r.implied_value_usd,
+      r.launch_odds,
+      r.farm_econ.risk_tags,
+      r.sibling_symbol,
+      radar.calibration.snapshot_7d_p05,
+      10000,
+      0.08,
+      8,
+    ).econ;
+    const custJs = model.repriceFarmScenario(r, radar.calibration, 10000, 0.08, 8);
+    assert.ok(Math.abs(custJs.net_of_fees_usd - custTs.net_of_fees_usd) <= 0.011, r.slug);
+    assert.ok(Math.abs(custJs.net_per_hour - custTs.net_per_hour) <= 0.011, r.slug);
   }
 });
 
-test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, maxLine<=400, zero truncation)', () => {
+test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, maxLine<=160, zero truncation)', () => {
   const dash = validateDashboardDir(join(repoRoot, 'dashboard'));
   assert.ok(dash.totalBytes <= 60_500, `dashboard total=${dash.totalBytes}`);
   for (const f of ['00_methodology.md', 'index.html', 'app.css', 'model.js', 'app.js']) {
@@ -197,11 +225,11 @@ test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, 
     assert.ok(!/https?:\/\//i.test(txt), `external URL in ${f}`);
     assert.ok(!/xmlns\s*=/i.test(txt), `xmlns= in ${f}`);
     const maxLine = txt.split(/\r?\n/).reduce((m, l) => Math.max(m, l.length), 0);
-    assert.ok(maxLine <= 400, `${f} maxLine=${maxLine} > 400`);
+    assert.ok(maxLine <= 160, `${f} maxLine=${maxLine} > 160`);
   }
 
-  const outA = mkdtempSync(join(tmpdir(), 'radar5-a-'));
-  const outB = mkdtempSync(join(tmpdir(), 'radar5-b-'));
+  const outA = mkdtempSync(join(tmpdir(), 'radar6-a-'));
+  const outB = mkdtempSync(join(tmpdir(), 'radar6-b-'));
   try {
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outA], { cwd: repoRoot });
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outB], { cwd: repoRoot });
@@ -212,8 +240,8 @@ test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, 
     }
     const dossierBuf = readFileSync(join(outA, 'dossier.json'));
     const info = validateDossierBytes(dossierBuf);
-    assert.ok(info.bytes <= 850_000, `dossier bytes=${info.bytes}`);
-    for (const shot of ['1-board.jpg', '2-detail.jpg', '3-filtered.jpg']) {
+    assert.ok(info.bytes <= 1_250_000, `dossier bytes=${info.bytes}`);
+    for (const shot of ['1-board.jpg', '2-detail.jpg', '3-filtered.jpg', '4-audit.jpg']) {
       const sBuf = readFileSync(join(repoRoot, 'screenshots', shot));
       assert.equal(sBuf[0], 0xff);
       assert.equal(sBuf[1], 0xd8);

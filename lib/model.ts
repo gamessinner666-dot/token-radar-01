@@ -33,12 +33,13 @@ import type {
   SnapshotProtocol,
 } from './types.ts';
 
-export const MODEL_VERSION = 'radar-5' as const;
+export const MODEL_VERSION = 'radar-6' as const;
 const DEFAULT_DROP_SHARE = 0.10;
 const DEFAULT_HORIZON_WEEKS = 12;
 const TBILL_APR = 0.02;
 const FARM_HOURLY_HURDLE = 25;
 const N_BOOTSTRAP = 200;
+const N_PLACEBO = 20;
 const CAT_RIDGE_K = 64;
 
 const round4 = (n: number): number => Math.round(n * 10_000) / 10_000;
@@ -72,6 +73,16 @@ function mulberry32(seed: number): () => number {
     x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
     return ((x ^ (x >>> 14)) >>> 0) / 4_294_967_296;
   };
+}
+
+/** Deterministic Fisher-Yates shuffle for seeded permutation placebo controls. */
+function shuffleArray<T>(items: readonly T[], rng: () => number): T[] {
+  const copy = items.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [copy[i], copy[j]] = [copy[j]!, copy[i]!];
+  }
+  return copy;
 }
 
 function buildStandalonePeers(snapshot: Snapshot, globalMed7d: number): {
@@ -146,7 +157,6 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
     { step: '+ 7d TVL growth', opts: { catK: CAT_RIDGE_K, useG7d: true }, status: 'tested_not_kept' },
     { step: '+ Age (log years)', opts: { catK: CAT_RIDGE_K, useAge: true }, status: 'tested_not_kept' },
     { step: '+ Chain count (ln)', opts: { catK: CAT_RIDGE_K, useChains: true }, status: 'tested_not_kept' },
-    { step: '+ Placebo: shifted row 7d', opts: { catK: CAT_RIDGE_K, usePlacebo: true }, status: 'control' },
   ];
 
   const ablation: AblationRow[] = [];
@@ -189,6 +199,44 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
     }
   }
 
+  // Stage 1 Placebo control: 20x seeded permutation mean of 7d growth
+  const s1Rng = mulberry32(20_261_125);
+  const rawCompG7 = compsWithPlacebo.map((c) => c.change_7d ?? globalMed7d);
+  let s1PlaceboLoo = 0;
+  let s1PlaceboWf = 0;
+  let s1PlaceboLooW3 = 0;
+  let s1PlaceboWfW3 = 0;
+  for (let rep = 0; rep < N_PLACEBO; rep++) {
+    const perm = shuffleArray(rawCompG7, s1Rng);
+    const permComps: CompWithPlacebo[] = compsWithPlacebo.map((c, idx) => ({
+      ...c,
+      placebo_g7d: perm[idx]!,
+    }));
+    const pWfTr = permComps.filter((c) => c.listed_at === null || c.listed_at < wfCutoff);
+    const pWfTe = permComps.filter((c) => c.listed_at !== null && c.listed_at >= wfCutoff);
+    const pLooAbs: number[] = [];
+    for (let i = 0; i < permComps.length; i++) {
+      const target = permComps[i]!;
+      const train = permComps.filter((_, j) => j !== i);
+      const { preds } = fitAndPredictPrice(train, [target], globalMed7d, { catK: CAT_RIDGE_K, usePlacebo: true });
+      pLooAbs.push(Math.abs(Math.log(target.mcap_usd / preds[0]!)));
+    }
+    const { preds: pWfPreds } = fitAndPredictPrice(pWfTr, pWfTe, globalMed7d, { catK: CAT_RIDGE_K, usePlacebo: true });
+    const pWfAbs = pWfTe.map((c, idx) => Math.abs(Math.log(c.mcap_usd / pWfPreds[idx]!)));
+    s1PlaceboLoo += Math.exp(median(pLooAbs));
+    s1PlaceboWf += Math.exp(median(pWfAbs));
+    s1PlaceboLooW3 += pLooAbs.filter((e) => e <= Math.log(3)).length / pLooAbs.length;
+    s1PlaceboWfW3 += pWfAbs.filter((e) => e <= Math.log(3)).length / pWfAbs.length;
+  }
+  ablation.push({
+    step: '+ Placebo: 20x shuffled 7d',
+    loo_miss: round3(s1PlaceboLoo / N_PLACEBO),
+    wf_miss: round3(s1PlaceboWf / N_PLACEBO),
+    loo_w3x: round3(s1PlaceboLooW3 / N_PLACEBO),
+    wf_w3x: round3(s1PlaceboWfW3 / N_PLACEBO),
+    status: 'control',
+  });
+
   const fullStage1 = fitAndPredictPrice(compsWithPlacebo, compsWithPlacebo, globalMed7d, { catK: CAT_RIDGE_K }).fit;
   const q25 = round4(quantile(looSignedFinal, 0.25));
   const q75 = round4(quantile(looSignedFinal, 0.75));
@@ -219,7 +267,6 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
     { step: '+ Size (log TVL)', opts: { useAge: true, useLegacy: true, useSector: true, useTvl: true }, status: 'kept' },
     { step: '+ 7d TVL growth', opts: { useAge: true, useLegacy: true, useSector: true, useTvl: true, useG7d: true }, status: 'kept' },
     { step: '+ Chain count (ln)', opts: { useAge: true, useLegacy: true, useSector: true, useTvl: true, useG7d: true, useChains: true }, status: 'tested_not_kept' },
-    { step: '+ Placebo: shifted row 7d', opts: { useAge: true, useLegacy: true, useSector: true, useTvl: true, useG7d: true, usePlacebo: true }, status: 'control' },
   ];
 
   const oddsAblation: OddsAblationRow[] = [];
@@ -253,6 +300,56 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
       status: os.status,
     });
   }
+
+  // Stage 2 Placebo control: 20x seeded permutation mean of 7d growth
+  const s2Rng = mulberry32(20_261_126);
+  const rawPeerG7 = standalone.map((p) => p.g7d);
+  let s2PlaceboB10 = 0;
+  let s2PlaceboA10 = 0;
+  let s2PlaceboBWf = 0;
+  let s2PlaceboAWf = 0;
+  const s2Opts = { useAge: true, useLegacy: true, useSector: true, useTvl: true, useG7d: true, usePlacebo: true };
+  for (let rep = 0; rep < N_PLACEBO; rep++) {
+    const perm = shuffleArray(rawPeerG7, s2Rng);
+    const permPeers: StandalonePeer[] = standalone.map((p, idx) => ({
+      ...p,
+      placebo: perm[idx]!,
+    }));
+    let b10 = 0;
+    let a10 = 0;
+    for (let f = 0; f < 10; f++) {
+      const tr = permPeers.filter((_, i) => i % 10 !== f);
+      const te = permPeers.filter((_, i) => i % 10 === f);
+      const m = fitLogisticOdds(tr, s2Opts);
+      for (const pt of te) {
+        const pr = m.predict(pt);
+        b10 += (pt.y - pr) ** 2;
+        if ((pr >= 0.5 ? 1 : 0) === pt.y) a10 += 1;
+      }
+    }
+    const pWfTr = permPeers.filter((p) => p.listed_at === null || p.listed_at < oddsWfCut);
+    const pWfTe = permPeers.filter((p) => p.listed_at !== null && p.listed_at >= oddsWfCut);
+    const wfM = fitLogisticOdds(pWfTr, s2Opts);
+    let bWf = 0;
+    let aWf = 0;
+    for (const pt of pWfTe) {
+      const pr = wfM.predict(pt);
+      bWf += (pt.y - pr) ** 2;
+      if ((pr >= 0.5 ? 1 : 0) === pt.y) aWf += 1;
+    }
+    s2PlaceboB10 += b10 / permPeers.length;
+    s2PlaceboA10 += a10 / permPeers.length;
+    s2PlaceboBWf += bWf / pWfTe.length;
+    s2PlaceboAWf += aWf / pWfTe.length;
+  }
+  oddsAblation.push({
+    step: '+ Placebo: 20x shuffled 7d',
+    cv10_brier: round3(s2PlaceboB10 / N_PLACEBO),
+    cv10_acc: round3(s2PlaceboA10 / N_PLACEBO),
+    wf_brier: round3(s2PlaceboBWf / N_PLACEBO),
+    wf_acc: round3(s2PlaceboAWf / N_PLACEBO),
+    status: 'control',
+  });
 
   const fullOdds = fitLogisticOdds(standalone, {
     useAge: true,
@@ -530,6 +627,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       flags: c.flags,
       sibling_symbol: c.sibling_symbol,
       farm_econ: farm.econ,
+      farm_items: farm.items,
       farm_steps: farm.steps,
     };
   });
@@ -589,6 +687,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     flags: r.flags,
     sibling_symbol: r.sibling_symbol,
     farm_econ: r.farm_econ,
+    farm_items: r.farm_items,
   }));
 
   const raw_comps = comparables.map((c) => ({

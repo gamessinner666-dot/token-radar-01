@@ -29,9 +29,10 @@ for (const file of readdirSync(join(repoRoot, 'dashboard'))) {
 
 const baseUrl = pathToFileURL(join(dashOut, 'index.html')).href;
 const targets = [
-  { name: '1-board.jpg', hash: '#exp=bittensor-dtao', w: 1440, h: 1280 },
-  { name: '2-detail.jpg', hash: '#p=keyrock', w: 1440, h: 920 },
-  { name: '3-filtered.jpg', hash: '#verdict=FARM&sort=netHr&dir=desc', w: 1440, h: 1180 },
+  { name: '1-board.jpg', hash: '', w: 1440, h: 1280 },
+  { name: '2-detail.jpg', hash: '#p=r25', w: 1440, h: 960 },
+  { name: '3-filtered.jpg', hash: '#verdict=FARM&sort=netHr&dir=desc', w: 1440, h: 1140 },
+  { name: '4-audit.jpg', hash: '#tab=audit', w: 1440, h: 940 },
 ];
 
 for (const t of targets) {

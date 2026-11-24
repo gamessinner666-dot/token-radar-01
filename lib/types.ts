@@ -136,7 +136,7 @@ export interface OddsModelParams {
 }
 
 export interface ModelCalibration {
-  model_version: 'radar-5';
+  model_version: 'radar-6';
   price_model: PriceModelParams;
   odds_model: OddsModelParams;
   snapshot_7d_p05: number;
@@ -183,9 +183,12 @@ export interface FarmEconomics {
   drop_share: number;
   horizon_weeks: number;
   setup_fee_usd: number;
+  weekly_fee_per_week_usd: number;
   weekly_fee_usd: number;
   exit_fee_usd: number;
   total_fees_usd: number;
+  base_minutes: number;
+  weekly_minutes_per_week: number;
   total_minutes: number;
   total_hours: number;
   modelled_drop_usd: number;
@@ -277,6 +280,7 @@ export interface RadarRow {
   flags: string[];
   sibling_symbol: string | null;
   farm_econ: FarmEconomics;
+  farm_items: FarmStepItem[];
 }
 
 export interface RadarSummary {
@@ -317,7 +321,7 @@ export interface RadarData {
   as_of: string;
   source: string;
   floor_usd: number;
-  model_version: 'radar-5';
+  model_version: 'radar-6';
   ledger: LedgerBuckets;
   calibration: ModelCalibration;
   summary: RadarSummary;

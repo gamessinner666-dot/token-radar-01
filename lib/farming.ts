@@ -173,7 +173,8 @@ function coreActionText(p: SnapshotProtocol, chain: string, profile: ChainProfil
     return `Open a balanced native BTC Lightning channel with ${name} ($${cap.toLocaleString('en-US')} in BTC) rather than wrapped bridges.`;
   }
   if (profile.family === 'bittensor') {
-    return `Stake $${cap.toLocaleString('en-US')} of native TAO into ${name}'s dTAO subnet pool on Bittensor and track alpha ratio.`;
+    const poolLabel = /dtao/i.test(name) ? `${name} subnet pool` : `${name}'s dTAO subnet pool`;
+    return `Stake $${cap.toLocaleString('en-US')} of native TAO into ${poolLabel} on Bittensor and track alpha ratio.`;
   }
   if (profile.family === 'algorand') {
     return cat.includes('rwa')
@@ -392,9 +393,12 @@ export function buildFarmEconomicsAndPlan(
       drop_share: dropShare,
       horizon_weeks: horizonWeeks,
       setup_fee_usd: setupFee,
+      weekly_fee_per_week_usd: profile.weeklyFee,
       weekly_fee_usd: weeklyOpsCost,
       exit_fee_usd: exitFee,
       total_fees_usd: totalFees,
+      base_minutes: profile.baseMins,
+      weekly_minutes_per_week: profile.weeklyMins,
       total_minutes: totalMins,
       total_hours: totalHours,
       modelled_drop_usd: modelledDrop,
