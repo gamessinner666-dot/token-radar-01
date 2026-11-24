@@ -12,6 +12,7 @@ import {
   fitLogisticOdds,
   median,
   quantile,
+  SECTORS,
   sectorOf,
   sigmoid,
   type CompWithPlacebo,
@@ -32,10 +33,10 @@ import type {
   SnapshotProtocol,
 } from './types.ts';
 
-export const MODEL_VERSION = 'radar-4' as const;
+export const MODEL_VERSION = 'radar-5' as const;
 const DEFAULT_DROP_SHARE = 0.10;
 const DEFAULT_HORIZON_WEEKS = 12;
-const TBILL_APR = 0.04;
+const TBILL_APR = 0.02;
 const FARM_HOURLY_HURDLE = 25;
 const N_BOOTSTRAP = 200;
 const CAT_RIDGE_K = 64;
@@ -96,6 +97,7 @@ function buildStandalonePeers(snapshot: Snapshot, globalMed7d: number): {
       sector: sectorOf(p.category),
       age_years: ay,
       age_filled: ay === null ? medianAgeYears : ay,
+      legacy: ay === null ? 1 : 0,
       listed_at: p.listed_at,
       ltvl: Math.log(p.tvl_usd / 50_000_000),
       g7d: Math.tanh(((p.change_7d ?? globalMed7d) - globalMed7d) / 35),
@@ -212,12 +214,12 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
     status: OddsAblationRow['status'];
   }[] = [
     { step: 'Base rate of peers', opts: {}, status: 'baseline' },
-    { step: '+ Age (log years listed)', opts: { useAge: true }, status: 'kept' },
-    { step: '+ Cat token share (m=8)', opts: { useAge: true, useCatShare: true }, status: 'tested_not_kept' },
-    { step: '+ Size (log TVL)', opts: { useAge: true, useTvl: true }, status: 'kept' },
-    { step: '+ 7d TVL growth', opts: { useAge: true, useTvl: true, useG7d: true }, status: 'kept' },
-    { step: '+ Chain count (ln)', opts: { useAge: true, useTvl: true, useG7d: true, useChains: true }, status: 'tested_not_kept' },
-    { step: '+ Placebo: shifted row 7d', opts: { useAge: true, useTvl: true, useG7d: true, usePlacebo: true }, status: 'control' },
+    { step: '+ Age + Pre-2021 legacy', opts: { useAge: true, useLegacy: true }, status: 'kept' },
+    { step: '+ 6-Sector effects', opts: { useAge: true, useLegacy: true, useSector: true }, status: 'kept' },
+    { step: '+ Size (log TVL)', opts: { useAge: true, useLegacy: true, useSector: true, useTvl: true }, status: 'kept' },
+    { step: '+ 7d TVL growth', opts: { useAge: true, useLegacy: true, useSector: true, useTvl: true, useG7d: true }, status: 'kept' },
+    { step: '+ Chain count (ln)', opts: { useAge: true, useLegacy: true, useSector: true, useTvl: true, useG7d: true, useChains: true }, status: 'tested_not_kept' },
+    { step: '+ Placebo: shifted row 7d', opts: { useAge: true, useLegacy: true, useSector: true, useTvl: true, useG7d: true, usePlacebo: true }, status: 'control' },
   ];
 
   const oddsAblation: OddsAblationRow[] = [];
@@ -254,6 +256,8 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
 
   const fullOdds = fitLogisticOdds(standalone, {
     useAge: true,
+    useLegacy: true,
+    useSector: true,
     useTvl: true,
     useG7d: true,
   });
@@ -298,9 +302,12 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
       intercept: round4(fullOdds.coef[0]!),
       beta_age: round4(fullOdds.coef[1]!),
       beta_age_se: 0,
-      beta_tvl: round4(fullOdds.coef[2]!),
+      beta_legacy: round4(fullOdds.coef[2]!),
+      beta_legacy_se: 0,
+      beta_sectors: [3, 4, 5, 6, 7].map((idx) => round4(fullOdds.coef[idx]!)),
+      beta_tvl: round4(fullOdds.coef[8]!),
       beta_tvl_se: 0,
-      beta_g7d: round4(fullOdds.coef[3]!),
+      beta_g7d: round4(fullOdds.coef[9]!),
       beta_g7d_se: 0,
       beta_chains: 0,
       median_age_years: medianAgeYears,
@@ -352,13 +359,16 @@ export function computeRowValuation(
   const valueIfLaunched = Math.max(1, Math.round(Math.exp(logVal)));
 
   const ageYears = age === null ? om.median_age_years : age / 365;
+  const legacy = age === null ? 1 : 0;
+  const secIdx = SECTORS.indexOf(sectorOf(p.category));
+  const secAdj = secIdx >= 0 && secIdx < 5 ? (om.beta_sectors[secIdx] ?? 0) : 0;
   const ltvl = Math.log(p.tvl_usd / 50_000_000);
   const g7d = Math.tanh(((p.change_7d ?? om.global_med_7d) - om.global_med_7d) / 35);
   const lch = Math.log(Math.max(1, p.chains.length));
-  const staticTerm = om.intercept + om.beta_tvl * ltvl + om.beta_g7d * g7d + om.beta_chains * lch;
+  const staticTerm = om.intercept + secAdj + om.beta_tvl * ltvl + om.beta_g7d * g7d + om.beta_chains * lch;
 
   const pMax = sigmoid(staticTerm + om.beta_age * Math.log(om.max_age_years + 0.15));
-  const pNow = sigmoid(staticTerm + om.beta_age * Math.log(ageYears + 0.15));
+  const pNow = sigmoid(staticTerm + om.beta_age * Math.log(ageYears + 0.15) + om.beta_legacy * legacy);
   const condOdds = clamp(Math.max(0.05, pMax - pNow) / Math.max(0.05, 1 - pNow), 0.15, 0.92);
   const finalOdds = siblingSymbol !== null ? Math.max(0.10, condOdds * 0.50) : condOdds;
   const launchOdds = round4(finalOdds);
@@ -379,7 +389,7 @@ function computeBootstrapRankRanges(
   cal: ModelCalibration,
 ): {
   rankRanges: Map<string, { low: number; high: number }>;
-  se: { intercept: number; betaTvl: number; betaAge: number; betaOddsTvl: number; betaG7d: number };
+  se: { intercept: number; betaTvl: number; betaAge: number; betaLegacy: number; betaOddsTvl: number; betaG7d: number };
 } {
   const rng = mulberry32(20_261_114);
   const { peers: standalone } = buildStandalonePeers(snapshot, cal.odds_model.global_med_7d);
@@ -387,6 +397,7 @@ function computeBootstrapRankRanges(
   const bInt: number[] = [];
   const bTvl: number[] = [];
   const bAge: number[] = [];
+  const bLeg: number[] = [];
   const bOTvl: number[] = [];
   const bG7d: number[] = [];
 
@@ -400,12 +411,19 @@ function computeBootstrapRankRanges(
       standBoot.push(standalone[Math.floor(rng() * standalone.length)]!);
     }
     const pFit = fitAndPredictPrice(compBoot, compBoot, cal.odds_model.global_med_7d, { catK: CAT_RIDGE_K }).fit;
-    const oFit = fitLogisticOdds(standBoot, { useAge: true, useTvl: true, useG7d: true }).coef;
+    const oFit = fitLogisticOdds(standBoot, {
+      useAge: true,
+      useLegacy: true,
+      useSector: true,
+      useTvl: true,
+      useG7d: true,
+    }).coef;
     bInt.push(pFit.intercept);
     bTvl.push(pFit.beta_tvl);
     bAge.push(oFit[1]!);
-    bOTvl.push(oFit[2]!);
-    bG7d.push(oFit[3]!);
+    bLeg.push(oFit[2]!);
+    bOTvl.push(oFit[8]!);
+    bG7d.push(oFit[9]!);
 
     const scores = candidates.map((cand) => {
       const p = cand.protocol;
@@ -414,12 +432,16 @@ function computeBootstrapRankRanges(
         Math.log(pFit.ref_tvl_usd) + pFit.intercept + pFit.beta_tvl * Math.log(p.tvl_usd / pFit.ref_tvl_usd) + adj,
       );
       const ay = cand.age === null ? cal.odds_model.median_age_years : cand.age / 365;
+      const legacy = cand.age === null ? 1 : 0;
+      const secIdx = SECTORS.indexOf(sectorOf(p.category));
+      const secAdj = secIdx >= 0 && secIdx < 5 ? oFit[3 + secIdx]! : 0;
       const st =
         oFit[0]! +
-        oFit[2]! * Math.log(p.tvl_usd / 50_000_000) +
-        oFit[3]! * Math.tanh(((p.change_7d ?? cal.odds_model.global_med_7d) - cal.odds_model.global_med_7d) / 35);
+        secAdj +
+        oFit[8]! * Math.log(p.tvl_usd / 50_000_000) +
+        oFit[9]! * Math.tanh(((p.change_7d ?? cal.odds_model.global_med_7d) - cal.odds_model.global_med_7d) / 35);
       const pMax = sigmoid(st + oFit[1]! * Math.log(cal.odds_model.max_age_years + 0.15));
-      const pNow = sigmoid(st + oFit[1]! * Math.log(ay + 0.15));
+      const pNow = sigmoid(st + oFit[1]! * Math.log(ay + 0.15) + oFit[2]! * legacy);
       let odds = clamp(Math.max(0.05, pMax - pNow) / Math.max(0.05, 1 - pNow), 0.15, 0.92);
       if (cand.sibling_symbol !== null) odds = Math.max(0.10, odds * 0.50);
       return { slug: p.slug, tvl: p.tvl_usd, imp: val * odds };
@@ -442,6 +464,7 @@ function computeBootstrapRankRanges(
       intercept: stdDev(bInt),
       betaTvl: stdDev(bTvl),
       betaAge: stdDev(bAge),
+      betaLegacy: stdDev(bLeg),
       betaOddsTvl: stdDev(bOTvl),
       betaG7d: stdDev(bG7d),
     },
@@ -464,6 +487,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   calibration.price_model.intercept_se = boot.se.intercept;
   calibration.price_model.beta_tvl_se = boot.se.betaTvl;
   calibration.odds_model.beta_age_se = boot.se.betaAge;
+  calibration.odds_model.beta_legacy_se = boot.se.betaLegacy;
   calibration.odds_model.beta_tvl_se = boot.se.betaOddsTvl;
   calibration.odds_model.beta_g7d_se = boot.se.betaG7d;
 
@@ -572,12 +596,15 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     category: c.category,
     tvl_usd: c.tvl_usd,
     mcap_usd: c.mcap_usd,
+    listed_at: c.listed_at,
   }));
   const raw_peers = snapshot.protocols.filter(isStandaloneForOdds).map((p) => ({
     slug: p.slug,
+    sector: sectorOf(p.category),
     tvl_usd: p.tvl_usd,
     change_7d: p.change_7d,
     age_days: ageDays(snapshot.as_of, p.listed_at),
+    listed_at: p.listed_at,
     y: (isPreToken(p) ? 0 : 1) as 0 | 1,
   }));
 
@@ -605,6 +632,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     },
     rows: radarRows,
     live_comparables: comparables,
+    set_aside: discovery.set_aside,
     raw_comps,
     raw_peers,
   };

@@ -29,9 +29,9 @@ for (const file of readdirSync(join(repoRoot, 'dashboard'))) {
 
 const baseUrl = pathToFileURL(join(dashOut, 'index.html')).href;
 const targets = [
-  { name: '1-board.jpg', hash: '' },
-  { name: '2-detail.jpg', hash: '#p=keyrock' },
-  { name: '3-filtered.jpg', hash: '#verdict=FARM&sort=netHr&dir=desc' },
+  { name: '1-board.jpg', hash: '#exp=bittensor-dtao', w: 1440, h: 1280 },
+  { name: '2-detail.jpg', hash: '#p=keyrock', w: 1440, h: 920 },
+  { name: '3-filtered.jpg', hash: '#verdict=FARM&sort=netHr&dir=desc', w: 1440, h: 1180 },
 ];
 
 for (const t of targets) {
@@ -43,10 +43,10 @@ for (const t of targets) {
       '--headless=new',
       '--disable-gpu',
       '--no-sandbox',
-      '--window-size=1440,1280',
+      `--window-size=${t.w},${t.h}`,
       '--force-device-scale-factor=1',
       '--hide-scrollbars',
-      '--virtual-time-budget=2500',
+      '--virtual-time-budget=3500',
       `--screenshot=${pngTmp}`,
       `${baseUrl}${t.hash}`,
     ],
@@ -59,7 +59,7 @@ for (const t of targets) {
     `$img=[System.Drawing.Image]::FromFile('${pngTmp.replace(/'/g, "''")}');`,
     `$enc=[System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders()|Where-Object{$_.MimeType -eq 'image/jpeg'}|Select-Object -First 1;`,
     '$ep=New-Object System.Drawing.Imaging.EncoderParameters 1;',
-    '$ep.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 72L);',
+    '$ep.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 68L);',
     `$img.Save('${jpgOut.replace(/'/g, "''")}', $enc, $ep);`,
     '$w=$img.Width; $h=$img.Height; $img.Dispose();',
     'Write-Output "$w $h";',

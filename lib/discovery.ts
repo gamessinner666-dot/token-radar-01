@@ -5,6 +5,7 @@ import type {
   CandidateProtocol,
   DiscoveryResult,
   LedgerBuckets,
+  SetAsideItem,
   Snapshot,
   SnapshotProtocol,
 } from './types.ts';
@@ -107,6 +108,7 @@ export function discoverCandidates(
   const watchlistSet = new Set<string>(snapshot.watchlist);
 
   const candidates: CandidateProtocol[] = [];
+  const setAside: SetAsideItem[] = [];
   const ledger: LedgerBuckets = {
     total: snapshot.protocols.length,
     watchlist: 0,
@@ -147,25 +149,30 @@ export function discoverCandidates(
     const cat = p.category ?? '';
     if (BRIDGE_CATEGORIES.has(cat)) {
       ledger.excl_bridges += 1;
+      setAside.push({ slug: p.slug, name: p.name, category: cat || 'Bridge', tvl_usd: p.tvl_usd, reason: 'Bridge / Chain infra' });
       continue;
     }
     if (LST_BTC_CATEGORIES.has(cat) || WRAPPED_NAME_RE.test(p.name)) {
       ledger.excl_lst_btc += 1;
+      setAside.push({ slug: p.slug, name: p.name, category: cat || 'Uncategorized', tvl_usd: p.tvl_usd, reason: 'LST / Restaked / Wrapped BTC' });
       continue;
     }
     if (cat === 'CEX' || VERSIONED_NAME_RE.test(p.name) || EXCHANGE_PREFIX_RE.test(p.name)) {
       ledger.excl_cex_ver_sib += 1;
+      setAside.push({ slug: p.slug, name: p.name, category: cat || 'Uncategorized', tvl_usd: p.tvl_usd, reason: cat === 'CEX' ? 'Centralized exchange' : 'Versioned / Exchange clone' });
       continue;
     }
-    // Also exclude non-watchlist remaining excluded comp categories if any (Token Locker / Launchpad)
     if (EXCLUDED_COMP_CATEGORIES.has(cat)) {
       ledger.excl_cex_ver_sib += 1;
+      setAside.push({ slug: p.slug, name: p.name, category: cat, tvl_usd: p.tvl_usd, reason: 'Excluded infra category' });
       continue;
     }
 
     const stem = p.slug.split('-')[0]?.toLowerCase() ?? '';
-    if (tokenizedStems.has(stem)) {
+    const sibSym = tokenizedStems.get(stem);
+    if (sibSym !== undefined) {
       ledger.excl_cex_ver_sib += 1;
+      setAside.push({ slug: p.slug, name: p.name, category: cat || 'Uncategorized', tvl_usd: p.tvl_usd, reason: `Tokenized sibling (${sibSym})` });
       continue;
     }
 
@@ -181,5 +188,6 @@ export function discoverCandidates(
     });
   }
 
-  return { candidates, ledger };
+  setAside.sort((a, b) => b.tvl_usd - a.tvl_usd);
+  return { candidates, ledger, set_aside: setAside };
 }

@@ -357,6 +357,7 @@ export interface StandalonePeer {
   sector: SectorName;
   age_years: number | null;
   age_filled: number;
+  legacy: 0 | 1;
   listed_at: string | null;
   ltvl: number;
   g7d: number;
@@ -366,6 +367,7 @@ export interface StandalonePeer {
 
 export interface OddsEvalOpts {
   useAge?: boolean;
+  useLegacy?: boolean;
   useSector?: boolean;
   useCatShare?: boolean;
   useTvl?: boolean;
@@ -402,6 +404,7 @@ export function fitLogisticOdds(
   const feat = (p: StandalonePeer): number[] => {
     const v = [1];
     if (opts.useAge) v.push(Math.log(p.age_filled + 0.15));
+    if (opts.useLegacy) v.push(p.legacy);
     if (opts.useCatShare) v.push(catLogit(p.category));
     if (opts.useSector) {
       for (let s = 0; s < 5; s++) v.push(p.sector === SECTORS[s] ? 1 : 0);

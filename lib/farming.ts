@@ -268,7 +268,7 @@ export function buildFarmEconomicsAndPlan(
 
   const modelledDrop = round2(impliedValueUsd * dropShare * (deposit / (p.tvl_usd + deposit)));
   const netOfFees = round2(modelledDrop - totalFees);
-  const tbillHurdle = round2(deposit * 0.04 * (horizonWeeks / 52));
+  const tbillHurdle = round2(deposit * 0.02 * (horizonWeeks / 52));
   const netPerHour = round2(netOfFees / Math.max(0.25, totalHours));
 
   let verdict: FarmVerdict = 'SKIP';
@@ -374,7 +374,7 @@ export function buildFarmEconomicsAndPlan(
     },
     {
       phase: 'BUDGET',
-      action: `Log tx hashes; $${totalFees.toFixed(2)} fees + $${tbillHurdle.toFixed(2)} 4% capital charge vs $${modelledDrop.toFixed(2)} drop = net ${netOfFees >= 0 ? '+' : ''}$${netOfFees.toFixed(2)} ($${netPerHour.toFixed(2)}/h -> ${verdict}).`,
+      action: `Log tx hashes; $${totalFees.toFixed(2)} fees + $${tbillHurdle.toFixed(2)} 2% carry spread vs $${modelledDrop.toFixed(2)} drop = net ${netOfFees >= 0 ? '+' : ''}$${netOfFees.toFixed(2)} ($${netPerHour.toFixed(2)}/h -> ${verdict}).`,
       cost_usd: 0,
       cost_label: 'free log',
       minutes: 3,

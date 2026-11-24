@@ -1,7 +1,7 @@
-# Token Radar v4 (`radar-4`) — Methodology & Audit Guide
-- **MECE Ledger (758/758):** Ranked (`185`: `40` WL + `17` >=$1B + `128` early), Comps (`98` consolidated by brand-verified symbol within sector), Tokenized (`318`), Bridges (`44`), LST/BTC (`53`), Sibling/CEX/Versioned (`60`). Zero leaked tokens.
-- **Stage 1 (`fitStage1Huber()` in `model.js`):** Fits `log(MCap/$100M)=a+b*log(TVL/$100M)+cat_adj` on `98` comps via 25-iter Huber IRLS (`delta=1.35`) + category ridge (`k=64`): LOO `x3.104` / WF `x2.672` (`50%/51%` <=x3) vs flat median (`x5.219`/`x5.156`).
-- **Stage 2 (`fitStage2Logistic()` in `model.js`):** L2 logistic (`lambda=1.5`) on `427` standalone peers using `log(age+0.15)`, `log(TVL/$50M)`, `tanh` 7d growth (`10F Brier 0.213`, `WF 0.225` vs `0.343` base). `cat_share (m=8)` & `chain_count` hurt WF (`0.257`, `0.227`) and are dropped (`beta_chains=0`). Sibling tokens take `0.50x` odds.
-- **Valuation & Bands (`evaluateProtocol()`):** `implied=round(if_launched*odds)`; conformal `P25–P75`/`P10–P90` from LOO residuals; `rank_low..rank_high` & parameter `± s.e.` from `200` seeded bootstrap refits.
-- **Farm Tickets (`buildFarmTicket()`):** Multi-chain lowest-gas routing across 10 families (zero `ERC-20`/`USDC` on non-EVM; `$5,000+` & `$0` weekly on ETH L1; underwriting pool for Insurance), `10%` drop share minus fees & `4%` T-bill (`FARM >=$25/h`), `-16.7%` P05 TVL exit rule, `8` costed/timed steps summing strictly to `total_minutes`.
-- **Browser Parity (`verifyBoardParity()`):** Live-refits `fitStage1Huber()` & `fitStage2Logistic()` from `RADAR.raw_comps`/`raw_peers`, verifying exact coefficients, all `185` rows, monotonic ranks, sum, and FNV-1a checksum (`eb4b13d5`). Zero network calls.
+# Token Radar v5 (`radar-5`) — Guide
+
+- **MECE (`758/758`):** >=$5M TVL -> Board (`185`: `40` WL, `17` LC, `128` Early), Comps (`98`), Tok (`318`), Aside (`157`: `44` bridge, `53` LST/BTC, `60` CEX/ver/sib).
+- **Stage 1 (`fitStage1Huber()`, `runValueAblation()`):** Huber (`delta=1.35`) + ridge (`k=64`) on `98` comps: `LOO x3.104`, `WF x2.672` vs flat (`x5.219`/`x5.156`).
+- **Stage 2 (`fitStage2Logistic()`, `runOddsAblation()`):** L2 logit (`1.5`) on `427` peers: `log(age+0.15)`, `pre2021Legacy` (51/58), 6 sectors, `log(TVL)`, `tanh` 7d (`10F 0.193`, `71%`; `WF 0.234`, `68%`). Chains dropped; siblings `0.50x`.
+- **Farm (`evaluateProtocol()`, `buildFarmTicket()`):** `P25-75`/`P10-90`, `200` bootstrap ranks, 10 chain families, `2%` carry, `$25/h`, `-16.7%` P05 TVL exit, `8` timed steps.
+- **Parity (`verifyBoardParity()`):** Live-refits Stage 1/2 + ablations asserting `185` rows, ranks, sum, FNV CRC.

@@ -112,6 +112,9 @@ export interface OddsModelParams {
   intercept: number;
   beta_age: number;
   beta_age_se: number;
+  beta_legacy: number;
+  beta_legacy_se: number;
+  beta_sectors: number[];
   beta_tvl: number;
   beta_tvl_se: number;
   beta_g7d: number;
@@ -133,7 +136,7 @@ export interface OddsModelParams {
 }
 
 export interface ModelCalibration {
-  model_version: 'radar-4';
+  model_version: 'radar-5';
   price_model: PriceModelParams;
   odds_model: OddsModelParams;
   snapshot_7d_p05: number;
@@ -205,9 +208,18 @@ export interface CandidateProtocol {
   sibling_symbol: string | null;
 }
 
+export interface SetAsideItem {
+  slug: string;
+  name: string;
+  category: string;
+  tvl_usd: number;
+  reason: string;
+}
+
 export interface DiscoveryResult {
   candidates: CandidateProtocol[];
   ledger: LedgerBuckets;
+  set_aside: SetAsideItem[];
 }
 
 export interface BoardRow {
@@ -288,13 +300,16 @@ export interface RawCompPoint {
   category: string;
   tvl_usd: number;
   mcap_usd: number;
+  listed_at: string | null;
 }
 
 export interface RawPeerPoint {
   slug: string;
+  sector: SectorName;
   tvl_usd: number;
   change_7d: number | null;
   age_days: number | null;
+  listed_at: string | null;
   y: 0 | 1;
 }
 
@@ -302,12 +317,13 @@ export interface RadarData {
   as_of: string;
   source: string;
   floor_usd: number;
-  model_version: 'radar-4';
+  model_version: 'radar-5';
   ledger: LedgerBuckets;
   calibration: ModelCalibration;
   summary: RadarSummary;
   rows: RadarRow[];
   live_comparables: ComparableEntity[];
+  set_aside: SetAsideItem[];
   raw_comps: RawCompPoint[];
   raw_peers: RawPeerPoint[];
 }
