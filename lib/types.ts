@@ -321,7 +321,7 @@ export interface RadarData {
   as_of: string;
   source: string;
   floor_usd: number;
-  model_version: 'radar-6';
+  model_version: 'radar-7';
   ledger: LedgerBuckets;
   calibration: ModelCalibration;
   summary: RadarSummary;

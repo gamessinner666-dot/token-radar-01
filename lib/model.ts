@@ -33,7 +33,7 @@ import type {
   SnapshotProtocol,
 } from './types.ts';
 
-export const MODEL_VERSION = 'radar-6' as const;
+export const MODEL_VERSION = 'radar-7' as const;
 const DEFAULT_DROP_SHARE = 0.10;
 const DEFAULT_HORIZON_WEEKS = 12;
 const TBILL_APR = 0.02;
@@ -462,10 +462,12 @@ export function computeRowValuation(
   const ltvl = Math.log(p.tvl_usd / 50_000_000);
   const g7d = Math.tanh(((p.change_7d ?? om.global_med_7d) - om.global_med_7d) / 35);
   const lch = Math.log(Math.max(1, p.chains.length));
-  const staticTerm = om.intercept + secAdj + om.beta_tvl * ltvl + om.beta_g7d * g7d + om.beta_chains * lch;
+  const structuralTerm = om.intercept + secAdj + om.beta_tvl * ltvl + om.beta_chains * lch;
 
-  const pMax = sigmoid(staticTerm + om.beta_age * Math.log(om.max_age_years + 0.15));
-  const pNow = sigmoid(staticTerm + om.beta_age * Math.log(ageYears + 0.15) + om.beta_legacy * legacy);
+  const pMax = sigmoid(structuralTerm + om.beta_age * Math.log(om.max_age_years + 0.15));
+  const pNow = sigmoid(
+    structuralTerm + om.beta_age * Math.log(ageYears + 0.15) + om.beta_legacy * legacy + om.beta_g7d * g7d,
+  );
   const condOdds = clamp(Math.max(0.05, pMax - pNow) / Math.max(0.05, 1 - pNow), 0.15, 0.92);
   const finalOdds = siblingSymbol !== null ? Math.max(0.10, condOdds * 0.50) : condOdds;
   const launchOdds = round4(finalOdds);
@@ -532,13 +534,11 @@ function computeBootstrapRankRanges(
       const legacy = cand.age === null ? 1 : 0;
       const secIdx = SECTORS.indexOf(sectorOf(p.category));
       const secAdj = secIdx >= 0 && secIdx < 5 ? oFit[3 + secIdx]! : 0;
-      const st =
-        oFit[0]! +
-        secAdj +
-        oFit[8]! * Math.log(p.tvl_usd / 50_000_000) +
+      const structural = oFit[0]! + secAdj + oFit[8]! * Math.log(p.tvl_usd / 50_000_000);
+      const g7dTerm =
         oFit[9]! * Math.tanh(((p.change_7d ?? cal.odds_model.global_med_7d) - cal.odds_model.global_med_7d) / 35);
-      const pMax = sigmoid(st + oFit[1]! * Math.log(cal.odds_model.max_age_years + 0.15));
-      const pNow = sigmoid(st + oFit[1]! * Math.log(ay + 0.15) + oFit[2]! * legacy);
+      const pMax = sigmoid(structural + oFit[1]! * Math.log(cal.odds_model.max_age_years + 0.15));
+      const pNow = sigmoid(structural + oFit[1]! * Math.log(ay + 0.15) + oFit[2]! * legacy + g7dTerm);
       let odds = clamp(Math.max(0.05, pMax - pNow) / Math.max(0.05, 1 - pNow), 0.15, 0.92);
       if (cand.sibling_symbol !== null) odds = Math.max(0.10, odds * 0.50);
       return { slug: p.slug, tvl: p.tvl_usd, imp: val * odds };

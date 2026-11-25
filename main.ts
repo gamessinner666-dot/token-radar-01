@@ -1,4 +1,4 @@
-// Token Radar 01 (radar-3) entrypoint — Node 22.18+ erasable TypeScript, stdlib only, zero network.
+// Token Radar 01 (radar-7) entrypoint — Node 22.18+ erasable TypeScript, stdlib only, zero network.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

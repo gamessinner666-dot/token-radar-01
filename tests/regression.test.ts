@@ -20,8 +20,8 @@ const snapshotPath = resolve(repoRoot, '../competition-kit/token-radar-01-kit/in
 const snapshot = parseSnapshot(readFileSync(snapshotPath, 'utf8'));
 const { board, radar } = buildRadar(snapshot);
 
-test('radar-6 MECE ledger, set_aside, rank monotonicity, 200-bootstrap bands & s.e., and boardIssue', () => {
-  assert.equal(radar.model_version, 'radar-6');
+test('radar-7 MECE ledger, set_aside, rank monotonicity, 200-bootstrap bands & s.e., and boardIssue', () => {
+  assert.equal(radar.model_version, 'radar-7');
   assert.equal(boardIssue(board, snapshot), null);
 
   const L = radar.ledger;
@@ -117,8 +117,8 @@ test('Domain & chain hygiene: sibling cut, underwriting pool, ETH floor, non-EVM
   }
 });
 
-test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', () => {
-  const noopEl = { innerHTML: '', querySelectorAll: () => [], addEventListener: () => {} };
+test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js + 02_app.js)', () => {
+  const noopEl = { innerHTML: '', textContent: '', addEventListener: () => {} };
   const ctx: Record<string, unknown> = {
     window: {},
     location: { hash: '', pathname: '/', search: '' },
@@ -130,8 +130,8 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
   };
   ctx.window = ctx;
   vm.runInNewContext(dataScript(radar), ctx);
-  vm.runInNewContext(readFileSync(join(repoRoot, 'dashboard/model.js'), 'utf8'), ctx);
-  vm.runInNewContext(readFileSync(join(repoRoot, 'dashboard/app.js'), 'utf8'), ctx);
+  vm.runInNewContext(readFileSync(join(repoRoot, 'dashboard/01_model.js'), 'utf8'), ctx);
+  vm.runInNewContext(readFileSync(join(repoRoot, 'dashboard/02_app.js'), 'utf8'), ctx);
 
   const model = (ctx.window as {
     RADAR_MODEL: {
@@ -142,6 +142,7 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
         refitOddsOk: boolean;
         ablationOk: boolean;
         mismatches: number;
+        farmMismatches: number;
         monoOk: boolean;
         totalExactOk: boolean;
         checksum: string;
@@ -156,7 +157,7 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
         low: number;
         high: number;
       };
-      repriceFarmScenario: (r: unknown, c: unknown, dep?: number | null, ds?: number | null, wk?: number | null) => {
+      buildFarmPlan: (r: unknown, c: unknown, dep?: number | null, ds?: number | null, wk?: number | null) => {
         deposit_usd: number;
         total_fees_usd: number;
         total_minutes: number;
@@ -174,11 +175,20 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
   assert.equal(vp.refitOddsOk, true);
   assert.equal(vp.ablationOk, true);
   assert.equal(vp.mismatches, 0);
+  assert.equal(vp.farmMismatches, 0);
   assert.equal(vp.monoOk, true);
   assert.equal(vp.totalExactOk, true);
   assert.equal(vp.checksumOk, true);
   assert.equal(vp.wlOk, true);
   assert.equal(vp.ledgerOk, true);
+
+  const r25 = radar.rows.find((r) => r.slug === 'r25')!;
+  assert.ok(r25, 'r25 present');
+  const gNeg = model.evaluateProtocol({ ...r25, change_7d: -20 }, vp.pFit, vp.oFit, radar.calibration);
+  const gZero = model.evaluateProtocol({ ...r25, change_7d: 0 }, vp.pFit, vp.oFit, radar.calibration);
+  const gPos = model.evaluateProtocol({ ...r25, change_7d: 30 }, vp.pFit, vp.oFit, radar.calibration);
+  assert.ok(gNeg.launchOdds < gZero.launchOdds && gZero.launchOdds < gPos.launchOdds, 'R25 odds monotonic in 7d growth');
+  assert.ok(gNeg.implied < gZero.implied && gZero.implied < gPos.implied, 'R25 implied value monotonic in 7d growth');
 
   const boardBySlug = new Map(board.map((r) => [r.slug, r]));
   const snapBySlug = new Map(snapshot.protocols.map((p) => [p.slug, p]));
@@ -189,7 +199,7 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
     assert.equal(v.launchOdds, r.launch_odds, r.slug);
     assert.equal(v.implied, r.implied_value_usd, r.slug);
 
-    const ft = model.repriceFarmScenario(r, radar.calibration);
+    const ft = model.buildFarmPlan(r, radar.calibration);
     assert.equal(ft.deposit_usd, r.farm_econ.deposit_usd, r.slug);
     assert.equal(ft.total_fees_usd, r.farm_econ.total_fees_usd, r.slug);
     assert.equal(ft.total_minutes, r.farm_econ.total_minutes, r.slug);
@@ -211,7 +221,7 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
       0.08,
       8,
     ).econ;
-    const custJs = model.repriceFarmScenario(r, radar.calibration, 10000, 0.08, 8);
+    const custJs = model.buildFarmPlan(r, radar.calibration, 10000, 0.08, 8);
     assert.ok(Math.abs(custJs.net_of_fees_usd - custTs.net_of_fees_usd) <= 0.011, r.slug);
     assert.ok(Math.abs(custJs.net_per_hour - custTs.net_per_hour) <= 0.011, r.slug);
   }
@@ -220,7 +230,9 @@ test('100% Live Browser Refit & 185-row Parity (dashboard/model.js + app.js)', (
 test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, maxLine<=160, zero truncation)', () => {
   const dash = validateDashboardDir(join(repoRoot, 'dashboard'));
   assert.ok(dash.totalBytes <= 60_500, `dashboard total=${dash.totalBytes}`);
-  for (const f of ['00_methodology.md', 'index.html', 'app.css', 'model.js', 'app.js']) {
+  const meth = readFileSync(join(repoRoot, 'dashboard/00_methodology.md'), 'utf8');
+  assert.ok(!/>=\s*\$1B/i.test(meth), '00_methodology.md must not claim >=$1B threshold for EXT tier');
+  for (const f of ['00_methodology.md', '01_model.js', '02_app.js', '03_styles.css', 'index.html']) {
     const txt = readFileSync(join(repoRoot, 'dashboard', f), 'utf8');
     assert.ok(!/https?:\/\//i.test(txt), `external URL in ${f}`);
     assert.ok(!/xmlns\s*=/i.test(txt), `xmlns= in ${f}`);
@@ -228,8 +240,8 @@ test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, 
     assert.ok(maxLine <= 160, `${f} maxLine=${maxLine} > 160`);
   }
 
-  const outA = mkdtempSync(join(tmpdir(), 'radar6-a-'));
-  const outB = mkdtempSync(join(tmpdir(), 'radar6-b-'));
+  const outA = mkdtempSync(join(tmpdir(), 'radar7-a-'));
+  const outB = mkdtempSync(join(tmpdir(), 'radar7-b-'));
   try {
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outA], { cwd: repoRoot });
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outB], { cwd: repoRoot });
