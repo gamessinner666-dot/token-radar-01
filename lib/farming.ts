@@ -271,10 +271,12 @@ export function buildFarmEconomicsAndPlan(
   const netOfFees = round2(modelledDrop - totalFees);
   const tbillHurdle = round2(deposit * 0.02 * (horizonWeeks / 52));
   const netPerHour = round2(netOfFees / Math.max(0.25, totalHours));
+  const excessAfterCarry = round2(netOfFees - tbillHurdle);
+  const excessPerHour = round2(excessAfterCarry / Math.max(0.25, totalHours));
 
   let verdict: FarmVerdict = 'SKIP';
-  if (netOfFees > tbillHurdle && netPerHour >= 25) verdict = 'FARM';
-  else if (netOfFees > 0) verdict = 'MARGINAL';
+  if (excessAfterCarry > 0 && excessPerHour >= 25) verdict = 'FARM';
+  else if (excessAfterCarry > 0) verdict = 'MARGINAL';
 
   const shareDenom = impliedValueUsd * (deposit / (p.tvl_usd + deposit));
   const breakEvenDrop = shareDenom > 0 ? round2((totalFees / shareDenom) * 10000) / 10000 : 1;
@@ -375,7 +377,7 @@ export function buildFarmEconomicsAndPlan(
     },
     {
       phase: 'BUDGET',
-      action: `Log tx hashes; $${totalFees.toFixed(2)} fees + $${tbillHurdle.toFixed(2)} 2% carry spread vs $${modelledDrop.toFixed(2)} drop = net ${netOfFees >= 0 ? '+' : ''}$${netOfFees.toFixed(2)} ($${netPerHour.toFixed(2)}/h -> ${verdict}).`,
+      action: `Log tx hashes; $${totalFees.toFixed(2)} fees + $${tbillHurdle.toFixed(2)} 2% carry vs $${modelledDrop.toFixed(2)} drop = excess ${excessAfterCarry >= 0 ? '+' : ''}$${excessAfterCarry.toFixed(2)} ($${excessPerHour.toFixed(2)}/h -> ${verdict}).`,
       cost_usd: 0,
       cost_label: 'free log',
       minutes: 3,
@@ -405,6 +407,8 @@ export function buildFarmEconomicsAndPlan(
       net_of_fees_usd: netOfFees,
       tbill_hurdle_usd: tbillHurdle,
       net_per_hour: netPerHour,
+      excess_after_carry_usd: excessAfterCarry,
+      excess_per_hour: excessPerHour,
       verdict,
       break_even_drop_share: breakEvenDrop,
       break_even_odds: breakEvenOdds,

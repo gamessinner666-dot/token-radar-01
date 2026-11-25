@@ -93,10 +93,17 @@ export interface PriceModelParams {
   q75_log: number;
   q10_log: number;
   q90_log: number;
+  sector_conformal_scales: Record<string, number>;
+  zq10: number;
+  zq25: number;
+  zq75: number;
+  zq90: number;
   wf_cutoff: string;
   n_comps: number;
   loo_miss: number;
+  cv10_miss: number;
   wf_miss: number;
+  size_split_miss: number;
   flat_loo_miss: number;
   flat_wf_miss: number;
   cov50_loo: number;
@@ -136,7 +143,7 @@ export interface OddsModelParams {
 }
 
 export interface ModelCalibration {
-  model_version: 'radar-6';
+  model_version: 'sonar-1';
   price_model: PriceModelParams;
   odds_model: OddsModelParams;
   snapshot_7d_p05: number;
@@ -195,6 +202,8 @@ export interface FarmEconomics {
   net_of_fees_usd: number;
   tbill_hurdle_usd: number;
   net_per_hour: number;
+  excess_after_carry_usd: number;
+  excess_per_hour: number;
   verdict: FarmVerdict;
   break_even_drop_share: number;
   break_even_odds: number;
@@ -321,7 +330,7 @@ export interface RadarData {
   as_of: string;
   source: string;
   floor_usd: number;
-  model_version: 'radar-7';
+  model_version: 'sonar-1';
   ledger: LedgerBuckets;
   calibration: ModelCalibration;
   summary: RadarSummary;

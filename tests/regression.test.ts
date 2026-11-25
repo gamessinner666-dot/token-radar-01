@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -20,9 +20,14 @@ const snapshotPath = resolve(repoRoot, '../competition-kit/token-radar-01-kit/in
 const snapshot = parseSnapshot(readFileSync(snapshotPath, 'utf8'));
 const { board, radar } = buildRadar(snapshot);
 
-test('radar-7 MECE ledger, set_aside, rank monotonicity, 200-bootstrap bands & s.e., and boardIssue', () => {
-  assert.equal(radar.model_version, 'radar-7');
+test('sonar-1 MECE ledger, set_aside, rank monotonicity, 200-bootstrap bands, sector conformal & boardIssue', () => {
+  assert.equal(radar.model_version, 'sonar-1');
   assert.equal(boardIssue(board, snapshot), null);
+  const scales = radar.calibration.price_model.sector_conformal_scales;
+  assert.ok(scales && scales['RWA, Payments & Insurance']! < 1 && scales['Credit & Stablecoins']! > 1);
+  assert.equal(radar.summary.farm_count, 56);
+  assert.equal(radar.summary.marginal_count, 95);
+  assert.equal(radar.summary.skip_count, 34);
 
   const L = radar.ledger;
   const ledgerSum =
@@ -56,6 +61,8 @@ test('Stage 1 & Stage 2 dual blind OOS ablations and dropped-term guardrails', (
   assert.ok(pm.ablation.length >= 6);
   assert.ok(pm.wf_miss < pm.flat_wf_miss);
   assert.ok(pm.loo_miss < pm.flat_loo_miss);
+  assert.ok(Number.isFinite(pm.cv10_miss) && pm.cv10_miss > 0);
+  assert.ok(Number.isFinite(pm.size_split_miss) && pm.size_split_miss > 0);
   assert.ok(pm.cov50_wf > 0 && pm.cov80_wf > pm.cov50_wf);
 
   assert.ok(om.ablation.length >= 6);
@@ -164,6 +171,8 @@ test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js
         verdict: string;
         net_of_fees_usd: number;
         net_per_hour: number;
+        excess_after_carry_usd: number;
+        excess_per_hour: number;
         break_even_odds: number;
         items: { phase: string }[];
       };
@@ -206,6 +215,8 @@ test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js
     assert.equal(ft.verdict, r.farm_econ.verdict, r.slug);
     assert.equal(ft.net_of_fees_usd, r.farm_econ.net_of_fees_usd, r.slug);
     assert.equal(ft.net_per_hour, r.farm_econ.net_per_hour, r.slug);
+    assert.equal(ft.excess_after_carry_usd, r.farm_econ.excess_after_carry_usd, r.slug);
+    assert.equal(ft.excess_per_hour, r.farm_econ.excess_per_hour, r.slug);
     assert.equal(ft.break_even_odds, r.farm_econ.break_even_odds, r.slug);
     assert.equal(ft.items.length, 8, r.slug);
     assert.ok(b.farm_steps.every((s, idx) => s.startsWith(`${ft.items[idx]!.phase}:`)), r.slug);
@@ -224,10 +235,13 @@ test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js
     const custJs = model.buildFarmPlan(r, radar.calibration, 10000, 0.08, 8);
     assert.ok(Math.abs(custJs.net_of_fees_usd - custTs.net_of_fees_usd) <= 0.011, r.slug);
     assert.ok(Math.abs(custJs.net_per_hour - custTs.net_per_hour) <= 0.011, r.slug);
+    assert.ok(Math.abs(custJs.excess_after_carry_usd - custTs.excess_after_carry_usd) <= 0.011, r.slug);
+    assert.ok(Math.abs(custJs.excess_per_hour - custTs.excess_per_hour) <= 0.011, r.slug);
+    assert.equal(custJs.verdict, custTs.verdict, r.slug);
   }
 });
 
-test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, maxLine<=160, zero truncation)', () => {
+test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, maxLine<=140, 3 shots)', () => {
   const dash = validateDashboardDir(join(repoRoot, 'dashboard'));
   assert.ok(dash.totalBytes <= 60_500, `dashboard total=${dash.totalBytes}`);
   const meth = readFileSync(join(repoRoot, 'dashboard/00_methodology.md'), 'utf8');
@@ -237,11 +251,11 @@ test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, 
     assert.ok(!/https?:\/\//i.test(txt), `external URL in ${f}`);
     assert.ok(!/xmlns\s*=/i.test(txt), `xmlns= in ${f}`);
     const maxLine = txt.split(/\r?\n/).reduce((m, l) => Math.max(m, l.length), 0);
-    assert.ok(maxLine <= 160, `${f} maxLine=${maxLine} > 160`);
+    assert.ok(maxLine <= 140, `${f} maxLine=${maxLine} > 140`);
   }
 
-  const outA = mkdtempSync(join(tmpdir(), 'radar7-a-'));
-  const outB = mkdtempSync(join(tmpdir(), 'radar7-b-'));
+  const outA = mkdtempSync(join(tmpdir(), 'sonar1-a-'));
+  const outB = mkdtempSync(join(tmpdir(), 'sonar1-b-'));
   try {
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outA], { cwd: repoRoot });
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outB], { cwd: repoRoot });
@@ -252,8 +266,11 @@ test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, 
     }
     const dossierBuf = readFileSync(join(outA, 'dossier.json'));
     const info = validateDossierBytes(dossierBuf);
-    assert.ok(info.bytes <= 1_250_000, `dossier bytes=${info.bytes}`);
-    for (const shot of ['1-board.jpg', '2-detail.jpg', '3-filtered.jpg', '4-audit.jpg']) {
+    assert.ok(info.bytes <= 950_000, `dossier bytes=${info.bytes}`);
+    const shotFiles = readdirSync(join(repoRoot, 'screenshots')).sort();
+    assert.deepEqual(shotFiles, ['1-board.jpg', '2-detail.jpg', '3-filtered.jpg']);
+    assert.equal(existsSync(join(repoRoot, 'screenshots', '4-audit.jpg')), false);
+    for (const shot of shotFiles) {
       const sBuf = readFileSync(join(repoRoot, 'screenshots', shot));
       assert.equal(sBuf[0], 0xff);
       assert.equal(sBuf[1], 0xd8);

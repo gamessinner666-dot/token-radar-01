@@ -1,4 +1,4 @@
-// Token Radar 01 (radar-7) entrypoint — Node 22.18+ erasable TypeScript, stdlib only, zero network.
+// Sonar (sonar-1) entrypoint — Node 22.18+ erasable TypeScript, stdlib only, zero network.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -96,10 +96,11 @@ const dossierCheck = validateDossierBytes(dossierBytes);
 writeFileSync(join(outDir, 'dossier.json'), dossierBytes);
 
 process.stdout.write(
-  `token radar (${radar.model_version}): ${snapshot.protocols.length} ledger -> ${board.length} ranked ` +
+  `sonar (${radar.model_version}): ${snapshot.protocols.length} ledger -> ${board.length} ranked ` +
     `(FARM=${radar.summary.farm_count}, MARGINAL=${radar.summary.marginal_count}, SKIP=${radar.summary.skip_count}; ` +
     `WF=x${radar.calibration.price_model.wf_miss}, LOO=x${radar.calibration.price_model.loo_miss}, ` +
+    `10F=x${radar.calibration.price_model.cv10_miss}, Size=x${radar.calibration.price_model.size_split_miss}, ` +
     `Brier=${radar.calibration.odds_model.wf_brier}, crc=${radar.calibration.board_checksum})\n` +
-    `token radar: dashboard=${dashFiles.length} files (${dashCheck.totalBytes} B), ` +
+    `sonar: dashboard=${dashFiles.length} files (${dashCheck.totalBytes} B), ` +
     `screenshots=${shotFiles.length}, dossier=${dossierCheck.bytes} B (text=${dossierCheck.textBytes} B, 0 truncation)\n`,
 );

@@ -33,7 +33,7 @@ import type {
   SnapshotProtocol,
 } from './types.ts';
 
-export const MODEL_VERSION = 'radar-7' as const;
+export const MODEL_VERSION = 'sonar-1' as const;
 const DEFAULT_DROP_SHARE = 0.10;
 const DEFAULT_HORIZON_WEEKS = 12;
 const TBILL_APR = 0.02;
@@ -243,6 +243,58 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
   const q10 = round4(quantile(looSignedFinal, 0.10));
   const q90 = round4(quantile(looSignedFinal, 0.90));
 
+  // Empirical-Bayes per-sector conformal scales (m=6 shrinkage toward global LOO MAD).
+  const looEntries = comparables.map((c, idx) => ({
+    sector: sectorOf(c.category),
+    res: looSignedFinal[idx]!,
+  }));
+  const globalMad = Math.max(0.1, median(looEntries.map((r) => Math.abs(r.res))));
+  const sectorConformalScales: Record<string, number> = {};
+  for (const sec of SECTORS) {
+    const vals = looEntries.filter((r) => r.sector === sec).map((r) => Math.abs(r.res));
+    const secMad = vals.length > 0 ? median(vals) : globalMad;
+    const shrunk = (vals.length * secMad + 6 * globalMad) / (vals.length + 6);
+    sectorConformalScales[sec] = round3(shrunk / globalMad);
+  }
+  const zLoo = looEntries.map((r) => r.res / (sectorConformalScales[r.sector] ?? 1));
+  const zq10 = round4(quantile(zLoo, 0.10));
+  const zq25 = round4(quantile(zLoo, 0.25));
+  const zq75 = round4(quantile(zLoo, 0.75));
+  const zq90 = round4(quantile(zLoo, 0.90));
+
+  // Blind walk-forward per-sector scales & quantiles calibrated strictly on wfTrain LOO residuals.
+  const wfTrEntries = wfTrain.map((c, i) => {
+    const trSub = wfTrain.filter((_, j) => j !== i);
+    const { preds } = fitAndPredictPrice(trSub, [c], globalMed7d, { catK: CAT_RIDGE_K });
+    return { sector: sectorOf(c.category), res: Math.log(c.mcap_usd / preds[0]!) };
+  });
+  const wfGlobalMad = Math.max(0.1, median(wfTrEntries.map((r) => Math.abs(r.res))));
+  const wfSecScales: Record<string, number> = {};
+  for (const sec of SECTORS) {
+    const vals = wfTrEntries.filter((r) => r.sector === sec).map((r) => Math.abs(r.res));
+    const secMad = vals.length > 0 ? median(vals) : wfGlobalMad;
+    wfSecScales[sec] = ((vals.length * secMad + 6 * wfGlobalMad) / (vals.length + 6)) / wfGlobalMad;
+  }
+  const wfZTrain = wfTrEntries.map((r) => r.res / (wfSecScales[r.sector] ?? 1));
+  const wfZq10 = quantile(wfZTrain, 0.10);
+  const wfZq25 = quantile(wfZTrain, 0.25);
+  const wfZq75 = quantile(wfZTrain, 0.75);
+  const wfZq90 = quantile(wfZTrain, 0.90);
+  const wfZTest = wfTest.map((c, idx) => wfSignedFinal[idx]! / (wfSecScales[sectorOf(c.category)] ?? 1));
+
+  // 4-Way Stage 1 Validation: 10-Fold CV + Size-Split (<$50M train -> >=$50M test).
+  const cv10Abs: number[] = [];
+  for (let fold = 0; fold < 10; fold++) {
+    const tr = compsWithPlacebo.filter((_, idx) => idx % 10 !== fold);
+    const te = compsWithPlacebo.filter((_, idx) => idx % 10 === fold);
+    const { preds } = fitAndPredictPrice(tr, te, globalMed7d, { catK: CAT_RIDGE_K });
+    te.forEach((c, j) => cv10Abs.push(Math.abs(Math.log(c.mcap_usd / preds[j]!))));
+  }
+  const smallComps = compsWithPlacebo.filter((c) => c.tvl_usd < 50_000_000);
+  const largeComps = compsWithPlacebo.filter((c) => c.tvl_usd >= 50_000_000);
+  const { preds: largePreds } = fitAndPredictPrice(smallComps, largeComps, globalMed7d, { catK: CAT_RIDGE_K });
+  const sizeSplitAbs = largeComps.map((c, j) => Math.abs(Math.log(c.mcap_usd / largePreds[j]!)));
+
   const cov = (arr: readonly number[], lo: number, hi: number): number =>
     round3(arr.filter((r) => r >= lo && r <= hi).length / Math.max(1, arr.length));
 
@@ -381,16 +433,23 @@ export function calibrateModel(snapshot: Snapshot, comparables: ComparableEntity
       q75_log: q75,
       q10_log: q10,
       q90_log: q90,
+      sector_conformal_scales: sectorConformalScales,
+      zq10,
+      zq25,
+      zq75,
+      zq90,
       wf_cutoff: wfCutoff,
       n_comps: comparables.length,
       loo_miss: keptAbl.loo_miss,
+      cv10_miss: round3(Math.exp(median(cv10Abs))),
       wf_miss: keptAbl.wf_miss,
+      size_split_miss: round3(Math.exp(median(sizeSplitAbs))),
       flat_loo_miss: flatAbl.loo_miss,
       flat_wf_miss: flatAbl.wf_miss,
-      cov50_loo: cov(looSignedFinal, q25, q75),
-      cov50_wf: cov(wfSignedFinal, q25, q75),
-      cov80_loo: cov(looSignedFinal, q10, q90),
-      cov80_wf: cov(wfSignedFinal, q10, q90),
+      cov50_loo: cov(zLoo, zq25, zq75),
+      cov50_wf: cov(wfZTest, wfZq25, wfZq75),
+      cov80_loo: cov(zLoo, zq10, zq90),
+      cov80_wf: cov(wfZTest, wfZq10, wfZq90),
       within3x_loo: keptAbl.loo_w3x,
       within3x_wf: keptAbl.wf_w3x,
       ablation,
@@ -473,10 +532,11 @@ export function computeRowValuation(
   const launchOdds = round4(finalOdds);
 
   const implied = Math.max(1, Math.round(valueIfLaunched * launchOdds));
-  const p25 = Math.max(1, Math.round(implied * Math.exp(pm.q25_log)));
-  const p75 = Math.max(implied, Math.round(implied * Math.exp(pm.q75_log)));
-  const p10 = Math.max(1, Math.round(implied * Math.exp(pm.q10_log)));
-  const p90 = Math.max(p75, Math.round(implied * Math.exp(pm.q90_log)));
+  const secScale = pm.sector_conformal_scales[sectorOf(p.category)] ?? 1;
+  const p25 = Math.max(1, Math.round(implied * Math.exp(pm.zq25 * secScale)));
+  const p75 = Math.max(implied, Math.round(implied * Math.exp(pm.zq75 * secScale)));
+  const p10 = Math.max(1, Math.round(implied * Math.exp(pm.zq10 * secScale)));
+  const p90 = Math.max(p75, Math.round(implied * Math.exp(pm.zq90 * secScale)));
 
   return { valueIfLaunched, launchOdds, implied, p25, p75, p10, p90 };
 }

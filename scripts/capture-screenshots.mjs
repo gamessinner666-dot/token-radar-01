@@ -1,4 +1,4 @@
-// Deterministic Chrome headless editorial screenshots + JPEG cap check (radar-7).
+// Deterministic Chrome headless 3-panel editorial screenshots + JPEG cap check (sonar-1).
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -29,10 +29,9 @@ for (const file of readdirSync(join(repoRoot, 'dashboard'))) {
 
 const baseUrl = pathToFileURL(join(dashOut, 'index.html')).href;
 const targets = [
-  { name: '1-board.jpg', hash: '', w: 1440, h: 1260 },
+  { name: '1-board.jpg', hash: '', w: 1440, h: 1280 },
   { name: '2-detail.jpg', hash: '#p=r25', w: 1440, h: 980 },
-  { name: '3-filtered.jpg', hash: '#verdict=FARM&sort=netHr&dir=desc', w: 1440, h: 1120 },
-  { name: '4-audit.jpg', hash: '#tab=audit', w: 1440, h: 940 },
+  { name: '3-filtered.jpg', hash: '#verdict=FARM&sort=netHr&dir=desc', w: 1440, h: 1160 },
 ];
 
 for (const t of targets) {
@@ -60,7 +59,7 @@ for (const t of targets) {
     `$img=[System.Drawing.Image]::FromFile('${pngTmp.replace(/'/g, "''")}');`,
     `$enc=[System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders()|Where-Object{$_.MimeType -eq 'image/jpeg'}|Select-Object -First 1;`,
     '$ep=New-Object System.Drawing.Imaging.EncoderParameters 1;',
-    '$ep.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 72L);',
+    '$ep.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 74L);',
     `$img.Save('${jpgOut.replace(/'/g, "''")}', $enc, $ep);`,
     '$w=$img.Width; $h=$img.Height; $img.Dispose();',
     'Write-Output "$w $h";',
