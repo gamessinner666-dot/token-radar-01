@@ -143,7 +143,7 @@ export interface OddsModelParams {
 }
 
 export interface ModelCalibration {
-  model_version: 'sonar-1';
+  model_version: 'sonar-2';
   price_model: PriceModelParams;
   odds_model: OddsModelParams;
   snapshot_7d_p05: number;
@@ -330,7 +330,7 @@ export interface RadarData {
   as_of: string;
   source: string;
   floor_usd: number;
-  model_version: 'sonar-1';
+  model_version: 'sonar-2';
   ledger: LedgerBuckets;
   calibration: ModelCalibration;
   summary: RadarSummary;

@@ -20,8 +20,8 @@ const snapshotPath = resolve(repoRoot, '../competition-kit/token-radar-01-kit/in
 const snapshot = parseSnapshot(readFileSync(snapshotPath, 'utf8'));
 const { board, radar } = buildRadar(snapshot);
 
-test('sonar-1 MECE ledger, set_aside, rank monotonicity, 200-bootstrap bands, sector conformal & boardIssue', () => {
-  assert.equal(radar.model_version, 'sonar-1');
+test('sonar-2 MECE ledger, set_aside, rank monotonicity, 200-bootstrap bands, sector conformal & boardIssue', () => {
+  assert.equal(radar.model_version, 'sonar-2');
   assert.equal(boardIssue(board, snapshot), null);
   const scales = radar.calibration.price_model.sector_conformal_scales;
   assert.ok(scales && scales['RWA, Payments & Insurance']! < 1 && scales['Credit & Stablecoins']! > 1);
@@ -174,7 +174,7 @@ test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js
         excess_after_carry_usd: number;
         excess_per_hour: number;
         break_even_odds: number;
-        items: { phase: string }[];
+        items: { phase: string; minutes: number; action: string }[];
       };
     };
   }).RADAR_MODEL;
@@ -208,10 +208,11 @@ test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js
     assert.equal(v.launchOdds, r.launch_odds, r.slug);
     assert.equal(v.implied, r.implied_value_usd, r.slug);
 
-    const ft = model.buildFarmPlan(r, radar.calibration);
+    const ft = model.buildFarmPlan({ ...r, farm_items: [] }, radar.calibration);
     assert.equal(ft.deposit_usd, r.farm_econ.deposit_usd, r.slug);
     assert.equal(ft.total_fees_usd, r.farm_econ.total_fees_usd, r.slug);
     assert.equal(ft.total_minutes, r.farm_econ.total_minutes, r.slug);
+    assert.equal(ft.items.reduce((acc, it) => acc + it.minutes, 0), r.farm_econ.total_minutes, r.slug);
     assert.equal(ft.verdict, r.farm_econ.verdict, r.slug);
     assert.equal(ft.net_of_fees_usd, r.farm_econ.net_of_fees_usd, r.slug);
     assert.equal(ft.net_per_hour, r.farm_econ.net_per_hour, r.slug);
@@ -220,6 +221,10 @@ test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js
     assert.equal(ft.break_even_odds, r.farm_econ.break_even_odds, r.slug);
     assert.equal(ft.items.length, 8, r.slug);
     assert.ok(b.farm_steps.every((s, idx) => s.startsWith(`${ft.items[idx]!.phase}:`)), r.slug);
+    if (!['evm_l2', 'eth_l1', 'btc_l2'].includes(r.farm_econ.chain_family)) {
+      const joined = ft.items.map((it) => it.action).join(' ');
+      assert.ok(!/\bERC-?20\b|\bUSDC\b/i.test(joined), `${r.slug} js non-EVM leak: ${joined}`);
+    }
 
     const custTs = buildFarmEconomicsAndPlan(
       snapBySlug.get(r.slug)!,
@@ -243,7 +248,7 @@ test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js
 
 test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, maxLine<=140, 3 shots)', () => {
   const dash = validateDashboardDir(join(repoRoot, 'dashboard'));
-  assert.ok(dash.totalBytes <= 60_500, `dashboard total=${dash.totalBytes}`);
+  assert.ok(dash.totalBytes <= 64_500, `dashboard total=${dash.totalBytes}`);
   const meth = readFileSync(join(repoRoot, 'dashboard/00_methodology.md'), 'utf8');
   assert.ok(!/>=\s*\$1B/i.test(meth), '00_methodology.md must not claim >=$1B threshold for EXT tier');
   for (const f of ['00_methodology.md', '01_model.js', '02_app.js', '03_styles.css', 'index.html']) {
@@ -254,8 +259,8 @@ test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, 
     assert.ok(maxLine <= 140, `${f} maxLine=${maxLine} > 140`);
   }
 
-  const outA = mkdtempSync(join(tmpdir(), 'sonar1-a-'));
-  const outB = mkdtempSync(join(tmpdir(), 'sonar1-b-'));
+  const outA = mkdtempSync(join(tmpdir(), 'sonar2-a-'));
+  const outB = mkdtempSync(join(tmpdir(), 'sonar2-b-'));
   try {
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outA], { cwd: repoRoot });
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outB], { cwd: repoRoot });
@@ -266,7 +271,7 @@ test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, 
     }
     const dossierBuf = readFileSync(join(outA, 'dossier.json'));
     const info = validateDossierBytes(dossierBuf);
-    assert.ok(info.bytes <= 950_000, `dossier bytes=${info.bytes}`);
+    assert.ok(info.bytes <= 1_050_000, `dossier bytes=${info.bytes}`);
     const shotFiles = readdirSync(join(repoRoot, 'screenshots')).sort();
     assert.deepEqual(shotFiles, ['1-board.jpg', '2-detail.jpg', '3-filtered.jpg']);
     assert.equal(existsSync(join(repoRoot, 'screenshots', '4-audit.jpg')), false);

@@ -33,7 +33,7 @@ import type {
   SnapshotProtocol,
 } from './types.ts';
 
-export const MODEL_VERSION = 'sonar-1' as const;
+export const MODEL_VERSION = 'sonar-2' as const;
 const DEFAULT_DROP_SHARE = 0.10;
 const DEFAULT_HORIZON_WEEKS = 12;
 const TBILL_APR = 0.02;

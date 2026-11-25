@@ -1,13 +1,9 @@
-# Sonar (`sonar-1`) — Methodology & Audit Guide
-
-- **MECE (`758/758`, `classifyProtocolUniverse()`):** `Board (185)` (`40` WL `>=$50M` + `17` EXT `>=$50M` + `128` Early
-  `$5M–$50M`), `Comps (98)` (`mcap_usd>0`), `Tokenized (318)`, `Set Aside (157)` (`44` bridges, `53` LST/BTC, `60`
-  CEX/versioned/sibling).
-- **Stage 1 (`fitStage1Huber()`, `runValueAblation()`):** 25-iter Huber IRLS (`$100M`, `delta=1.35`) + ridge (`k=64`) on
-  `98` comps: `LOO x3.104`, `10F x3.078`, `WF x2.672`, `Size >=$50M x5.520` vs flat (`x5.219`/`x5.156`) & `20x
-  shuffled` (`x3.179`/`x3.076`). Sector conformal scales (`m=6`: RWA `x0.70` to Credit `x1.34`).
-- **Stage 2 (`fitStage2Logistic()`, `runOddsAblation()`):** L2 logit (`lambda=1.5`, `427` peers): `10F 0.193`/`71.2%`,
-  `WF 0.234`/`68.3%`; `pMax` at median 7d keeps odds monotonic in 7d growth. Siblings take `0.50x`.
-- **Excess Carry (`buildFarmPlan()`):** 10-family router; `excess = drop - fees - 2% carry` (`FARM >=$25/h`, `MARG >$0`,
-  `SKIP <=$0` -> `56/95/34`), `-16.7%` P05 exit, `8` steps.
-- **Parity (`verifyBoardParity()`):** Live refits Stage 1/2 from raw data, verifying `185/185` rows & CRC.
+# Sonar (`sonar-2`) — Methodology
+- **MECE (`758/758`, `ledgerOf()`):** `185` ranked (`40` WL `>=$50M`+`17` EXT `>=$50M`+`128` Early `$5–50M`),
+  `98` comps (`mcap_usd>0`), `318` tokenized, `157` aside.
+- **Stage 1 (`fitStage1Huber()`, `valueLadder()`):** Huber IRLS+ridge (`k=64`): `LOO ×3.104`, `10F ×3.078`,
+  `WF ×2.672`, `Size ×5.520` vs `20×` ctrl (`×3.076`); sector scales `×0.70..×1.34`.
+- **Stage 2 (`fitStage2Logistic()`, `oddsLadder()`):** L2 logit (`427` peers): `10F 0.193`/`71.2%`,
+  `WF 0.234`/`68.3%`; `beta_chains=0`; `0.50×` sib cut.
+- **Self-Contained Farm (`farmPlan()`):** `8` concrete steps across `10` families (`excess = drop-fees-2% carry`,
+  `56/95/34`), `4%` T-bill, `185/185` parity (`crc 660b243f`).
