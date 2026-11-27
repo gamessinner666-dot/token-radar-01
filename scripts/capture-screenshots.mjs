@@ -1,4 +1,4 @@
-// Headless Chrome capture of the 3 Sonar (sonar-2) dashboard screenshots (<=512 KiB, 800..1440px).
+// Headless Chrome capture of the 3 Sonar (sonar-3) dashboard screenshots (<=512 KiB, 800..1440px).
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 const repoRoot = resolve(import.meta.dirname, '..');
 const outDir = resolve(repoRoot, 'out');
 const shotsDir = resolve(repoRoot, 'screenshots');
-const snapPath = resolve(repoRoot, '../competition-kit/token-radar-01-kit/input/snapshot.json');
+const snapPath = resolve(repoRoot, '../kit-v50/token-radar-01-kit/input/snapshot.json');
 
 const CHROME = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -22,8 +22,8 @@ mkdirSync(shotsDir, { recursive: true });
 const pageBaseUrl = pathToFileURL(join(outDir, 'dashboard', 'index.html')).href;
 const targets = [
   { file: '1-board.jpg', hash: '', w: 1440, h: 1280 },
-  { file: '2-detail.jpg', hash: '#p=axis', w: 1440, h: 1080 },
-  { file: '3-filtered.jpg', hash: '#verdict=FARM&sort=netHr&dir=desc&open=swan-dao', w: 1440, h: 1220 },
+  { file: '2-detail.jpg', hash: '#p=axis', w: 1440, h: 1020 },
+  { file: '3-filtered.jpg', hash: '#verdict=FARM&sort=netHr&dir=desc&open=vault-street', w: 1440, h: 1220 },
 ];
 
 for (const t of targets) {

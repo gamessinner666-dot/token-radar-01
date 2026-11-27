@@ -1,6 +1,6 @@
 // Quantitative Net-of-Fees 10-Family Chain-Architecture x Category-Action Farming Engine.
-// Computes plan deposit size, itemized gas fees, hands-on time, 4% T-bill opportunity hurdle,
-// FARM/MARGINAL/SKIP verdict, break-even thresholds, quantified TVL exit triggers, and 8 steps.
+// Computes plan deposit size, exact minimum profitable ticket (Pays from $X), itemized fees,
+// hands-on minutes, configurable carry hurdle, FARM/MARGINAL/SKIP verdict, and 9 operator steps.
 
 import { clamp } from './comparables.ts';
 import type { ChainFamily, FarmEconomics, FarmStepItem, FarmVerdict, SnapshotProtocol } from './types.ts';
@@ -50,7 +50,7 @@ export function classifySingleChain(chain: string): ChainProfile {
     return {
       family: 'solana', familyLabel: 'Solana', costOrder: 1,
       wallet: 'Phantom or Backpack wallet', gasAsset: 'SOL', gasTier: '<$0.05/tx (SOL)',
-      setupFee: 0.55, weeklyFee: 0.02, exitFee: 0.05, minFloor: 1000, baseMins: 35, weeklyMins: 5,
+      setupFee: 0.55, weeklyFee: 0.02, exitFee: 0.05, minFloor: 1000, baseMins: 45, weeklyMins: 5,
       cadence: 'bi-weekly organic rebalance',
       cleanup: 'close empty SPL token accounts to reclaim SOL rent and revoke delegates',
     };
@@ -70,16 +70,16 @@ export function classifySingleChain(chain: string): ChainProfile {
       wallet: `${chain}-compatible BTC/EVM wallet`,
       gasAsset: chain === 'Stacks' ? 'STX' : chain === 'CORE' ? 'CORE' : 'BTC',
       gasTier: '$0.35–$3.50/tx',
-      setupFee: 3.50, weeklyFee: 0.35, exitFee: 2.00, minFloor: 2000, baseMins: 45, weeklyMins: 5,
+      setupFee: 3.50, weeklyFee: 0.35, exitFee: 2.00, minFloor: 2000, baseMins: 50, weeklyMins: 5,
       cadence: 'hold across unbonding epochs',
-      cleanup: 'check 7–21d unbonding cooldowns and revoke spend limits',
+      cleanup: 'check 7–21 day unbonding cooldowns and revoke spend limits',
     };
   }
   if (chain === 'Bittensor') {
     return {
       family: 'bittensor', familyLabel: 'Bittensor (Substrate)', costOrder: 2,
       wallet: 'Bittensor Wallet or Polkadot.js signer', gasAsset: 'TAO', gasTier: '<$0.10/tx (TAO)',
-      setupFee: 0.25, weeklyFee: 0.05, exitFee: 0.15, minFloor: 1500, baseMins: 45, weeklyMins: 4,
+      setupFee: 0.25, weeklyFee: 0.05, exitFee: 0.15, minFloor: 1500, baseMins: 50, weeklyMins: 4,
       cadence: 'periodic subnet yield check',
       cleanup: 'unstake subnet alpha back to root TAO watching slippage',
     };
@@ -88,7 +88,7 @@ export function classifySingleChain(chain: string): ChainProfile {
     return {
       family: 'algorand', familyLabel: 'Algorand (AVM)', costOrder: 1,
       wallet: 'Pera or Defly Algorand wallet', gasAsset: 'ALGO', gasTier: '<$0.02/tx (ALGO)',
-      setupFee: 0.25, weeklyFee: 0.01, exitFee: 0.05, minFloor: 1000, baseMins: 40, weeklyMins: 4,
+      setupFee: 0.25, weeklyFee: 0.01, exitFee: 0.05, minFloor: 1000, baseMins: 45, weeklyMins: 4,
       cadence: 'bi-weekly organic check-in',
       cleanup: 'opt out of unused ASAs to reclaim 0.1 ALGO min balance',
     };
@@ -98,7 +98,7 @@ export function classifySingleChain(chain: string): ChainProfile {
       family: 'cosmos_ibc', familyLabel: 'Cosmos / IBC', costOrder: 1,
       wallet: 'Keplr or Leap IBC wallet', gasAsset: chain === 'Noble' ? 'IBC fee token' : 'native IBC gas',
       gasTier: '<$0.05/tx (IBC)',
-      setupFee: 0.40, weeklyFee: 0.03, exitFee: 0.15, minFloor: 1000, baseMins: 40, weeklyMins: 4,
+      setupFee: 0.40, weeklyFee: 0.03, exitFee: 0.15, minFloor: 1000, baseMins: 45, weeklyMins: 4,
       cadence: 'bi-weekly organic check-in',
       cleanup: 'transfer balances back over canonical IBC channels',
     };
@@ -109,7 +109,7 @@ export function classifySingleChain(chain: string): ChainProfile {
       family: 'xrpl_stellar', familyLabel: xr ? 'XRPL' : 'Stellar', costOrder: 2,
       wallet: xr ? 'Xaman (XRPL) wallet' : 'Freighter (Stellar) wallet',
       gasAsset: xr ? 'XRP' : 'XLM', gasTier: `<$0.02/tx + ${xr ? 'XRP' : 'XLM'} reserve`,
-      setupFee: 0.35, weeklyFee: 0.02, exitFee: 0.10, minFloor: 1500, baseMins: 40, weeklyMins: 4,
+      setupFee: 0.35, weeklyFee: 0.02, exitFee: 0.10, minFloor: 1500, baseMins: 45, weeklyMins: 4,
       cadence: 'epoch hold',
       cleanup: 'zero issued balances and remove unused trustlines',
     };
@@ -118,7 +118,7 @@ export function classifySingleChain(chain: string): ChainProfile {
     return {
       family: 'alt_vm', familyLabel: `${chain} (Alt-VM)`, costOrder: 2,
       wallet: `${chain}-native wallet`, gasAsset: `${chain} gas`, gasTier: '$0.06–$0.80/tx',
-      setupFee: 0.80, weeklyFee: 0.06, exitFee: 0.25, minFloor: 1000, baseMins: 40, weeklyMins: 5,
+      setupFee: 0.80, weeklyFee: 0.06, exitFee: 0.25, minFloor: 1000, baseMins: 45, weeklyMins: 5,
       cadence: 'bi-weekly organic check-in',
       cleanup: 'clear session keys or contract permissions on exit',
     };
@@ -127,7 +127,7 @@ export function classifySingleChain(chain: string): ChainProfile {
     return {
       family: 'eth_l1', familyLabel: 'Ethereum L1 Only', costOrder: 9,
       wallet: 'EVM wallet (Rabby or hardware signer)', gasAsset: 'ETH', gasTier: '$12–$18/tx (L1 gas)',
-      setupFee: 18.00, weeklyFee: 0.0, exitFee: 12.00, minFloor: 5000, baseMins: 45, weeklyMins: 3,
+      setupFee: 18.00, weeklyFee: 0.0, exitFee: 12.00, minFloor: 5000, baseMins: 50, weeklyMins: 3,
       cadence: 'deposit-and-hold (no weekly L1 churn)',
       cleanup: 'withdraw exact balance and revoke ERC-20 allowances',
     };
@@ -135,7 +135,7 @@ export function classifySingleChain(chain: string): ChainProfile {
   return {
     family: 'evm_l2', familyLabel: 'EVM L2 / Low-Gas Alt-L1', costOrder: 0,
     wallet: 'EVM wallet (Rabby or MetaMask)', gasAsset: `${chain} gas`, gasTier: '$0.08–$0.30/tx',
-    setupFee: 1.15, weeklyFee: 0.08, exitFee: 0.25, minFloor: 1000, baseMins: 40, weeklyMins: 5,
+    setupFee: 1.15, weeklyFee: 0.08, exitFee: 0.25, minFloor: 1000, baseMins: 45, weeklyMins: 5,
     cadence: 'bi-weekly organic rebalance',
     cleanup: 'repay any debt and revoke unlimited ERC-20 approvals',
   };
@@ -166,6 +166,31 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** Exact minimum deposit (rounded up to nearest $100) where modelled drop beats fees + carry. */
+export function calcMinTicketUsd(
+  impliedValueUsd: number,
+  dropShare: number,
+  tvlUsd: number,
+  totalFees: number,
+  carryRate: number,
+): number | null {
+  const V = impliedValueUsd * dropShare;
+  if (!(V > totalFees && V > 0 && tvlUsd > 0)) return null;
+  let dMin: number;
+  if (carryRate <= 0) {
+    dMin = totalFees === 0 ? 100 : (totalFees * tvlUsd) / (V - totalFees);
+  } else {
+    const b = carryRate * tvlUsd + totalFees - V;
+    if (b >= 0) return null;
+    const disc = b * b - 4 * carryRate * totalFees * tvlUsd;
+    if (disc <= 0) return null;
+    dMin = (-b - Math.sqrt(disc)) / (2 * carryRate);
+  }
+  const cand = Math.max(100, Math.ceil(dMin / 100) * 100);
+  const netCheck = (V * cand) / (tvlUsd + cand) - totalFees - carryRate * cand;
+  return netCheck > 0 ? cand : null;
+}
+
 function coreActionText(p: SnapshotProtocol, chain: string, profile: ChainProfile, cap: number): string {
   const cat = (p.category ?? '').toLowerCase();
   const name = p.name;
@@ -189,25 +214,25 @@ function coreActionText(p: SnapshotProtocol, chain: string, profile: ChainProfil
     return `Set the ${chain} trustline and supply $${cap.toLocaleString('en-US')} of ${asset} liquidity into ${name}.`;
   }
   if (cat.includes('insurance')) {
-    return `Supply $${cap.toLocaleString('en-US')} to ${name}'s underwriting / cover pool on ${chain} (do not buy cover unless hedging: premiums are sunk).`;
+    return `Supply $${cap.toLocaleString('en-US')} to ${name}'s underwriting cover pool on ${chain} (avoid buying cover unless hedging: premiums are sunk).`;
   }
   if (cat.includes('curator') || cat.includes('allocator') || cat.includes('aggregator') || cat.includes('cdp manager') || cat.includes('indexes')) {
-    return `Deposit $${cap.toLocaleString('en-US')} into a ${name} curated vault on ${chain} receiving liquid shares; verify curator fee % and liquidity.`;
+    return `Deposit $${cap.toLocaleString('en-US')} into a ${name} curated vault on ${chain} receiving liquid shares; verify curator fee percentage and exit liquidity.`;
   }
-  if (cat.includes('lend') || cat.includes('cdp') || cat.includes('collateral')) {
-    return `Supply $${cap.toLocaleString('en-US')} of collateral to ${name} on ${chain}; optionally borrow <35% LTV only if carry is positive.`;
+  if (cat.includes('lend') || cat.includes('cdp') || cat.includes('collateral Markets'.toLowerCase()) || cat.includes('collateral')) {
+    return `Supply $${cap.toLocaleString('en-US')} of collateral to ${name} on ${chain}; optionally borrow below 35% LTV only if carry is positive.`;
   }
   if (cat.includes('dex') || cat.includes('liquidity manager')) {
-    return `Provide $${cap.toLocaleString('en-US')} of deep major-pair liquidity on ${name} (${chain}) avoiding tight-range IL.`;
+    return `Provide $${cap.toLocaleString('en-US')} of deep major-pair liquidity on ${name} (${chain}), avoiding tight-range impermanent loss.`;
   }
   if (cat.includes('derivative') || cat.includes('prediction') || cat.includes('option') || cat.includes('otc') || cat.includes('synthetic')) {
-    return `Post $${cap.toLocaleString('en-US')} margin on ${name} (${chain}) with small hedged limit orders (keep turnover low: fees are sunk).`;
+    return `Post $${cap.toLocaleString('en-US')} margin on ${name} (${chain}) with small hedged limit orders so trading fees stay minimal.`;
   }
   if (cat.includes('basis') || cat.includes('yield') || cat.includes('farm') || cat.includes('governance') || cat === 'dor') {
     return `Mint or stake $${cap.toLocaleString('en-US')} of ${name}'s yield-bearing or delta-neutral receipt on ${chain} and hold across epochs.`;
   }
   if (cat.includes('rwa') || cat.includes('cedefi') || cat.includes('crypto card') || cat.includes('payments')) {
-    return `Pass issuer KYC/accreditation first, then hold $${cap.toLocaleString('en-US')} in ${name}'s permitted rail on ${chain}.`;
+    return `Pass issuer KYC and eligibility first, then hold $${cap.toLocaleString('en-US')} in ${name}'s permitted rail on ${chain}.`;
   }
   return `Deposit $${cap.toLocaleString('en-US')} of native ${chain} assets into ${name}'s core pool on ${chain}.`;
 }
@@ -233,7 +258,7 @@ function fmtStepFee(usd: number): string {
 function formatStepLine(s: FarmStepItem): string {
   let line = `${s.phase}: ${s.action} Cost: ${s.cost_label}. Time: ${s.time_label}.`;
   if (line.length > 600) line = `${line.slice(0, 596)}...`;
-  if (line.length < 20) line = `${line} Verify official docs.`;
+  if (line.length < 20) line = `${line} Verify official documentation.`;
   return line;
 }
 
@@ -253,6 +278,7 @@ export function buildFarmEconomicsAndPlan(
   depositOverride?: number,
   dropShare = 0.10,
   horizonWeeks = 12,
+  carryApr = 0.02,
 ): FarmPlanResult {
   const { chain, profile } = selectBestChain(p.chains);
   const deposit = depositOverride ?? planDepositUsd(p.tvl_usd, profile.minFloor);
@@ -267,12 +293,14 @@ export function buildFarmEconomicsAndPlan(
   const totalMins = profile.baseMins + weeklyTotalMins;
   const totalHours = round2(totalMins / 60);
 
+  const carryRate = carryApr * (horizonWeeks / 52);
   const modelledDrop = round2(impliedValueUsd * dropShare * (deposit / (p.tvl_usd + deposit)));
   const netOfFees = round2(modelledDrop - totalFees);
-  const tbillHurdle = round2(deposit * 0.02 * (horizonWeeks / 52));
+  const tbillHurdle = round2(deposit * carryRate);
   const netPerHour = round2(netOfFees / Math.max(0.25, totalHours));
   const excessAfterCarry = round2(netOfFees - tbillHurdle);
   const excessPerHour = round2(excessAfterCarry / Math.max(0.25, totalHours));
+  const minTicketUsd = calcMinTicketUsd(impliedValueUsd, dropShare, p.tvl_usd, totalFees, carryRate);
 
   let verdict: FarmVerdict = 'SKIP';
   if (excessAfterCarry > 0 && excessPerHour >= 25) verdict = 'FARM';
@@ -306,82 +334,102 @@ export function buildFarmEconomicsAndPlan(
   if (siblingSymbol !== null) riskTags.push(`Sibling ${siblingSymbol}`);
   if (riskTags.length === 0) riskTags.push('Smart-Contract Risk');
 
-  const coreMins = Math.max(5, profile.baseMins - 30);
+  const coreMins = Math.max(5, profile.baseMins - 35);
   const settleNote =
     profile.family === 'bitcoin'
-      ? 'allow 10–60m on-chain settlement'
+      ? 'allow 10–60 min on-chain settlement'
       : profile.family === 'eth_l1'
         ? 'withdraw direct to skip bridge gas'
-        : 'allow 2–15m finality';
+        : 'allow 2–15 min finality';
   const secondaryChain = p.chains.find((c) => c !== chain && classifySingleChain(c).costOrder <= 2);
   const secondaryNote = secondaryChain
-    ? ` Optional: mirror 1 light organic tx on ${secondaryChain} if points weight multi-chain.`
+    ? ` Optional: execute one light organic transaction on ${secondaryChain} if points weight multi-chain activity.`
     : '';
+  const payFloorTxt = minTicketUsd !== null
+    ? `pays from $${minTicketUsd.toLocaleString('en-US')}`
+    : `diluted at ${(carryApr * 100).toFixed(0)}% carry`;
 
   const items: FarmStepItem[] = [
     {
       phase: 'SETUP',
-      action: `Prepare a dedicated ${profile.wallet} on ${chain} with ${profile.gasAsset} fee buffer (~2 setup txs @ ${profile.gasTier}; no airdrop is confirmed).`,
+      when: 'Day 0',
+      action: `Configure a dedicated ${profile.wallet} on ${chain} holding ${profile.gasAsset} for gas (${profile.gasTier}; no airdrop is confirmed).`,
       cost_usd: round2(setupFee * 0.35),
       cost_label: `${fmtStepFee(round2(setupFee * 0.35))} gas`,
       minutes: 8,
-      time_label: '8m',
+      time_label: '8 min',
     },
     {
       phase: 'VERIFY',
-      action: `Open ${p.name} via its DefiLlama entry or official docs, bookmark the URL, and check contracts (never sign approvals from third-party links).`,
+      when: 'Day 0',
+      action: `Open ${p.name} through its DefiLlama entry or official documentation, bookmark the domain, and verify contract addresses before signing.`,
       cost_usd: 0,
       cost_label: 'free',
       minutes: 5,
-      time_label: '5m',
+      time_label: '5 min',
     },
     {
       phase: 'FUND',
-      action: `Move $${deposit.toLocaleString('en-US')} in native ${chain} assets onto ${chain} (${settleNote}).${multiNote}`,
+      when: 'Day 0',
+      action: `Bridge or transfer $${deposit.toLocaleString('en-US')} in native ${chain} assets onto ${chain} (${settleNote}).${multiNote}`,
       cost_usd: round2(setupFee * 0.65),
-      cost_label: `${fmtStepFee(round2(setupFee * 0.65))} transfer`,
+      cost_label: `${fmtStepFee(round2(setupFee * 0.65))} bridge`,
       minutes: 7,
-      time_label: '7m',
+      time_label: '7 min',
     },
     {
-      phase: 'CORE',
-      action: `Start with a $100 test tx, confirm tracking, then scale to full $${deposit.toLocaleString('en-US')}: ${coreActionText(p, chain, profile, deposit)}`,
+      phase: 'ENTER',
+      when: 'Day 1',
+      action: `Send a $100 test transaction first, verify dashboard tracking updates, then scale to $${deposit.toLocaleString('en-US')}: ${coreActionText(p, chain, profile, deposit)}`,
       cost_usd: 0,
-      cost_label: `$${deposit.toLocaleString('en-US')} at risk`,
+      cost_label: `$${deposit.toLocaleString('en-US')} capital`,
       minutes: coreMins,
-      time_label: `${coreMins}m`,
+      time_label: `${coreMins} min`,
     },
     {
       phase: 'CADENCE',
-      action: `Hold ${horizonWeeks} weeks using ${profile.cadence} (~${profile.weeklyMins}m/wk; avoid wasteful churn).${secondaryNote}`,
+      when: `Weeks 1–${horizonWeeks}`,
+      action: `Hold the position across ${horizonWeeks} weeks with ${profile.cadence} (~${profile.weeklyMins} min/wk; avoid wasteful churn).${secondaryNote}`,
       cost_usd: weeklyOpsCost,
-      cost_label: `${fmtStepFee(weeklyOpsCost)} over ${horizonWeeks}wk`,
+      cost_label: `${fmtStepFee(weeklyOpsCost)} over ${horizonWeeks}w`,
       minutes: weeklyTotalMins,
-      time_label: `${profile.weeklyMins}m/wk (${weeklyTotalMins}m)`,
+      time_label: `${profile.weeklyMins} min/wk`,
     },
     {
       phase: 'RISK',
+      when: 'Ongoing',
       action: riskText(p, flags, siblingSymbol),
       cost_usd: 0,
       cost_label: 'free check',
       minutes: 2,
-      time_label: '2m',
+      time_label: '2 min',
     },
     {
-      phase: 'EXIT RULE',
+      phase: 'STOP RULE',
+      when: 'Any day',
       action: `Check TVL weekly and withdraw immediately if TVL breaks below ${exitTvlM} (${p05DropPct.toFixed(1)}% P05 stress threshold) or withdrawals pause; ${profile.cleanup}.`,
       cost_usd: exitFee,
       cost_label: `${fmtStepFee(exitFee)} unwind`,
       minutes: 5,
-      time_label: '5m',
+      time_label: '5 min',
+    },
+    {
+      phase: 'CLAIM',
+      when: 'At launch',
+      action: `Monitor ${p.name}'s official announcements for any TGE eligibility checker, inspect the claim contract carefully, and archive receipts.`,
+      cost_usd: 0,
+      cost_label: 'free check',
+      minutes: 5,
+      time_label: '5 min',
     },
     {
       phase: 'BUDGET',
-      action: `Log tx hashes; $${totalFees.toFixed(2)} fees + $${tbillHurdle.toFixed(2)} 2% carry vs $${modelledDrop.toFixed(2)} drop = excess ${excessAfterCarry >= 0 ? '+' : ''}$${excessAfterCarry.toFixed(2)} ($${excessPerHour.toFixed(2)}/h -> ${verdict}).`,
+      when: 'Summary',
+      action: `Total $${totalFees.toFixed(2)} fees plus $${tbillHurdle.toFixed(2)} (${(carryApr * 100).toFixed(0)}% carry) vs $${modelledDrop.toFixed(2)} drop equals ${excessAfterCarry >= 0 ? '+' : ''}$${excessAfterCarry.toFixed(2)} excess ($${excessPerHour.toFixed(2)}/hr; ${payFloorTxt}) -> ${verdict}.`,
       cost_usd: 0,
-      cost_label: 'free log',
+      cost_label: 'review',
       minutes: 3,
-      time_label: '3m',
+      time_label: '3 min',
     },
   ];
 
@@ -392,8 +440,10 @@ export function buildFarmEconomicsAndPlan(
       family_label: profile.familyLabel,
       gas_tier: profile.gasTier,
       deposit_usd: deposit,
+      min_ticket_usd: minTicketUsd,
       drop_share: dropShare,
       horizon_weeks: horizonWeeks,
+      carry_apr: carryApr,
       setup_fee_usd: setupFee,
       weekly_fee_per_week_usd: profile.weeklyFee,
       weekly_fee_usd: weeklyOpsCost,

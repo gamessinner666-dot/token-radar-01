@@ -1,6 +1,5 @@
-// Deterministic 3-tier discovery, strict hygiene filters, and MECE 758-protocol ledger accounting.
+// Deterministic 3-tier discovery, house-rule exclusion filters, and MECE 758-protocol ledger accounting.
 
-import { EXCLUDED_COMP_CATEGORIES } from './comparables.ts';
 import type {
   CandidateProtocol,
   DiscoveryResult,
@@ -10,30 +9,19 @@ import type {
   SnapshotProtocol,
 } from './types.ts';
 
-export const HYGIENE_EXCLUDED_CATEGORIES = new Set<string>([
-  'CEX',
+export const HOUSE_EXCLUDED_CATEGORIES = new Set<string>([
   'Bridge',
   'Canonical Bridge',
-  'Cross Chain Bridge',
   'Liquid Staking',
   'Liquid Restaking',
   'Restaked BTC',
-  'Anchor BTC',
-  'Decentralized BTC',
-  'Stablecoin Wrapper',
+  'CEX',
 ]);
 
-export const BRIDGE_CATEGORIES = new Set<string>(['Bridge', 'Canonical Bridge', 'Cross Chain Bridge']);
-export const LST_BTC_CATEGORIES = new Set<string>([
-  'Liquid Staking',
-  'Liquid Restaking',
-  'Restaked BTC',
-  'Anchor BTC',
-  'Decentralized BTC',
-  'Stablecoin Wrapper',
-]);
+export const BRIDGE_CATEGORIES = new Set<string>(['Bridge', 'Canonical Bridge']);
+export const LST_BTC_CATEGORIES = new Set<string>(['Liquid Staking', 'Liquid Restaking', 'Restaked BTC']);
 
-export const VERSIONED_NAME_RE = /(\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)|[A-Za-z]V\d+)$/;
+export const VERSIONED_NAME_RE = /\s(v\d+(\.\d+)?|\d+\.\d+)$/i;
 export const WRAPPED_NAME_RE = /\b(wrapped|staked|staking)\b/i;
 export const EXCHANGE_PREFIX_RE = /^(Binance|Coinbase|Bybit|Kraken|Bitget|OKX|Bitfinex|Gemini)\b/i;
 
@@ -54,7 +42,7 @@ export function isPreToken(p: SnapshotProtocol): boolean {
 
 export function isStandaloneForOdds(p: SnapshotProtocol): boolean {
   const cat = p.category ?? '';
-  if (HYGIENE_EXCLUDED_CATEGORIES.has(cat)) return false;
+  if (HOUSE_EXCLUDED_CATEGORIES.has(cat)) return false;
   if (VERSIONED_NAME_RE.test(p.name) || WRAPPED_NAME_RE.test(p.name) || EXCHANGE_PREFIX_RE.test(p.name)) {
     return false;
   }
@@ -154,28 +142,23 @@ export function discoverCandidates(
     }
     if (LST_BTC_CATEGORIES.has(cat) || WRAPPED_NAME_RE.test(p.name)) {
       ledger.excl_lst_btc += 1;
-      setAside.push({ slug: p.slug, name: p.name, category: cat || 'Uncategorized', tvl_usd: p.tvl_usd, reason: 'LST / Restaked / Wrapped BTC' });
+      setAside.push({ slug: p.slug, name: p.name, category: cat || 'Uncategorized', tvl_usd: p.tvl_usd, reason: 'LST / Restaked / Wrapped' });
       continue;
     }
     if (cat === 'CEX' || VERSIONED_NAME_RE.test(p.name) || EXCHANGE_PREFIX_RE.test(p.name)) {
       ledger.excl_cex_ver_sib += 1;
-      setAside.push({ slug: p.slug, name: p.name, category: cat || 'Uncategorized', tvl_usd: p.tvl_usd, reason: cat === 'CEX' ? 'Centralized exchange' : 'Versioned / Exchange clone' });
-      continue;
-    }
-    if (EXCLUDED_COMP_CATEGORIES.has(cat)) {
-      ledger.excl_cex_ver_sib += 1;
-      setAside.push({ slug: p.slug, name: p.name, category: cat, tvl_usd: p.tvl_usd, reason: 'Excluded infra category' });
+      setAside.push({
+        slug: p.slug,
+        name: p.name,
+        category: cat || 'Uncategorized',
+        tvl_usd: p.tvl_usd,
+        reason: cat === 'CEX' ? 'Centralized exchange' : 'Versioned / Exchange clone',
+      });
       continue;
     }
 
     const stem = p.slug.split('-')[0]?.toLowerCase() ?? '';
-    const sibSym = tokenizedStems.get(stem);
-    if (sibSym !== undefined) {
-      ledger.excl_cex_ver_sib += 1;
-      setAside.push({ slug: p.slug, name: p.name, category: cat || 'Uncategorized', tvl_usd: p.tvl_usd, reason: `Tokenized sibling (${sibSym})` });
-      continue;
-    }
-
+    const siblingSymbol = tokenizedStems.get(stem) ?? null;
     const tier = p.tvl_usd >= snapshot.floor_usd ? 'large-cap' : 'early';
     if (tier === 'large-cap') ledger.large_cap += 1;
     else ledger.early += 1;
@@ -183,8 +166,8 @@ export function discoverCandidates(
     candidates.push({
       protocol: p,
       tier,
-      flags: buildFlags(p, null),
-      sibling_symbol: null,
+      flags: buildFlags(p, siblingSymbol),
+      sibling_symbol: siblingSymbol,
     });
   }
 

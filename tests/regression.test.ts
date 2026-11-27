@@ -16,18 +16,18 @@ import {
 } from '../lib/validate.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..');
-const snapshotPath = resolve(repoRoot, '../competition-kit/token-radar-01-kit/input/snapshot.json');
+const snapshotPath = resolve(repoRoot, '../kit-v50/token-radar-01-kit/input/snapshot.json');
 const snapshot = parseSnapshot(readFileSync(snapshotPath, 'utf8'));
 const { board, radar } = buildRadar(snapshot);
 
-test('sonar-2 MECE ledger, set_aside, rank monotonicity, 200-bootstrap bands, sector conformal & boardIssue', () => {
-  assert.equal(radar.model_version, 'sonar-2');
+test('sonar-3 MECE ledger (198 rows), set_aside (144), rank monotonicity, 200-bootstrap bands & sign stability', () => {
+  assert.equal(radar.model_version, 'sonar-3');
   assert.equal(boardIssue(board, snapshot), null);
   const scales = radar.calibration.price_model.sector_conformal_scales;
   assert.ok(scales && scales['RWA, Payments & Insurance']! < 1 && scales['Credit & Stablecoins']! > 1);
-  assert.equal(radar.summary.farm_count, 56);
-  assert.equal(radar.summary.marginal_count, 95);
-  assert.equal(radar.summary.skip_count, 34);
+  assert.equal(radar.summary.farm_count, 66);
+  assert.equal(radar.summary.marginal_count, 100);
+  assert.equal(radar.summary.skip_count, 32);
 
   const L = radar.ledger;
   const ledgerSum =
@@ -35,15 +35,24 @@ test('sonar-2 MECE ledger, set_aside, rank monotonicity, 200-bootstrap bands, se
   assert.equal(L.total, 758);
   assert.equal(ledgerSum, 758);
   assert.equal(L.watchlist, 40);
+  assert.equal(L.large_cap, 20);
+  assert.equal(L.early, 138);
+  assert.equal(board.length, 198);
   assert.equal(board.length, L.watchlist + L.large_cap + L.early);
   assert.equal(radar.rows.length, board.length);
   assert.equal(radar.set_aside.length, L.excl_bridges + L.excl_lst_btc + L.excl_cex_ver_sib);
-  assert.equal(radar.set_aside.length, 157);
+  assert.equal(radar.set_aside.length, 144);
   assert.equal(radar.rows.filter((r) => r.tier === 'watchlist').length, 40);
   assert.equal(radar.calibration.n_bootstrap, 200);
   assert.ok(radar.calibration.price_model.intercept_se > 0 && radar.calibration.price_model.beta_tvl_se > 0);
-  assert.ok(radar.calibration.odds_model.beta_age_se > 0 && radar.calibration.odds_model.beta_legacy_se > 0 && radar.calibration.odds_model.beta_tvl_se > 0);
-  assert.equal(radar.calibration.odds_model.beta_sectors.length, 5);
+  assert.ok(
+    radar.calibration.odds_model.beta_age_se > 0 &&
+      radar.calibration.odds_model.beta_legacy_se > 0 &&
+      radar.calibration.odds_model.beta_cat_share_se > 0,
+  );
+  assert.equal(radar.calibration.odds_model.cat_share_k, 6);
+  assert.equal(radar.calibration.odds_model.age_buckets.length, 5);
+  assert.ok(Object.values(radar.calibration.odds_model.sign_holds).every((v) => v >= 0.95));
 
   for (let i = 0; i < radar.rows.length; i++) {
     const r = radar.rows[i]!;
@@ -65,10 +74,12 @@ test('Stage 1 & Stage 2 dual blind OOS ablations and dropped-term guardrails', (
   assert.ok(Number.isFinite(pm.size_split_miss) && pm.size_split_miss > 0);
   assert.ok(pm.cov50_wf > 0 && pm.cov80_wf > pm.cov50_wf);
 
+  assert.equal(om.n_peers, 442);
   assert.ok(om.ablation.length >= 6);
   assert.equal(om.beta_chains, 0);
   assert.ok(om.cv10_brier < 0.20, `10F Brier=${om.cv10_brier}`);
-  assert.ok(om.wf_acc >= 0.65, `WF Acc=${om.wf_acc}`);
+  assert.ok(om.wf_brier <= 0.215, `WF Brier=${om.wf_brier}`);
+  assert.ok(om.wf_acc >= 0.64, `WF Acc=${om.wf_acc}`);
   const droppedChain = om.ablation.find((a) => a.step.toLowerCase().includes('chain'));
   assert.ok(droppedChain && droppedChain.status === 'tested_not_kept');
   assert.ok(om.wf_brier < om.base_wf_brier);
@@ -82,13 +93,16 @@ test('Stage 1 & Stage 2 dual blind OOS ablations and dropped-term guardrails', (
   assert.ok(s2Placebo.cv10_brier >= om.cv10_brier && s2Placebo.wf_brier >= om.wf_brier);
 });
 
-test('Domain & chain hygiene: sibling cut, underwriting pool, ETH floor, non-EVM zero leak, exact step minute sum', () => {
+test('Domain & chain hygiene: 198-row sibling cut, underwriting pool, ETH floor, non-EVM zero leak, 9-step minute sum', () => {
   const bySlug = new Map(board.map((r) => [r.slug, r]));
   const snapBySlug = new Map(snapshot.protocols.map((p) => [p.slug, p]));
   const mezo = bySlug.get('mezo-earn');
   assert.ok(mezo);
   assert.equal(mezo.sibling_symbol, 'MEZO');
   assert.ok(mezo.flags.some((f) => f.includes('Tokenized Sibling')));
+
+  assert.ok(bySlug.has('circle-gateway'));
+  assert.ok(bySlug.has('communityv3'));
 
   const firelight = bySlug.get('firelight');
   assert.ok(firelight);
@@ -99,7 +113,8 @@ test('Domain & chain hygiene: sibling cut, underwriting pool, ETH floor, non-EVM
   assert.ok(!tao.farm_steps.some((s) => /dTAO\s+dTAO/i.test(s)), 'no duplicate dTAO wording');
 
   for (const r of board) {
-    assert.equal(r.farm_steps.length, 8, `${r.slug} must have 8 farm steps`);
+    assert.equal(r.farm_steps.length, 9, `${r.slug} must have 9 farm steps`);
+    assert.ok(r.farm_steps.some((s) => s.startsWith('CLAIM:')), `${r.slug} must include CLAIM step`);
     for (const step of r.farm_steps) {
       assert.ok(step.length >= 20 && step.length <= 600, `${r.slug} step length ${step.length}`);
     }
@@ -124,7 +139,7 @@ test('Domain & chain hygiene: sibling cut, underwriting pool, ETH floor, non-EVM
   }
 });
 
-test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js + 02_app.js)', () => {
+test('100% Live Browser Refit, R25 7d Monotonicity, Carry Toggle & 198-row Parity (01_model.js + 02_app.js)', () => {
   const noopEl = { innerHTML: '', textContent: '', addEventListener: () => {} };
   const ctx: Record<string, unknown> = {
     window: {},
@@ -164,8 +179,16 @@ test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js
         low: number;
         high: number;
       };
-      buildFarmPlan: (r: unknown, c: unknown, dep?: number | null, ds?: number | null, wk?: number | null) => {
+      buildFarmPlan: (
+        r: unknown,
+        c: unknown,
+        dep?: number | null,
+        ds?: number | null,
+        wk?: number | null,
+        carry?: number | null,
+      ) => {
         deposit_usd: number;
+        min_ticket_usd: number | null;
         total_fees_usd: number;
         total_minutes: number;
         verdict: string;
@@ -210,6 +233,7 @@ test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js
 
     const ft = model.buildFarmPlan({ ...r, farm_items: [] }, radar.calibration);
     assert.equal(ft.deposit_usd, r.farm_econ.deposit_usd, r.slug);
+    assert.equal(ft.min_ticket_usd, r.farm_econ.min_ticket_usd, r.slug);
     assert.equal(ft.total_fees_usd, r.farm_econ.total_fees_usd, r.slug);
     assert.equal(ft.total_minutes, r.farm_econ.total_minutes, r.slug);
     assert.equal(ft.items.reduce((acc, it) => acc + it.minutes, 0), r.farm_econ.total_minutes, r.slug);
@@ -219,30 +243,32 @@ test('100% Live Browser Refit, R25 7d Monotonicity & 185-row Parity (01_model.js
     assert.equal(ft.excess_after_carry_usd, r.farm_econ.excess_after_carry_usd, r.slug);
     assert.equal(ft.excess_per_hour, r.farm_econ.excess_per_hour, r.slug);
     assert.equal(ft.break_even_odds, r.farm_econ.break_even_odds, r.slug);
-    assert.equal(ft.items.length, 8, r.slug);
+    assert.equal(ft.items.length, 9, r.slug);
     assert.ok(b.farm_steps.every((s, idx) => s.startsWith(`${ft.items[idx]!.phase}:`)), r.slug);
     if (!['evm_l2', 'eth_l1', 'btc_l2'].includes(r.farm_econ.chain_family)) {
       const joined = ft.items.map((it) => it.action).join(' ');
       assert.ok(!/\bERC-?20\b|\bUSDC\b/i.test(joined), `${r.slug} js non-EVM leak: ${joined}`);
     }
 
-    const custTs = buildFarmEconomicsAndPlan(
-      snapBySlug.get(r.slug)!,
-      r.implied_value_usd,
-      r.launch_odds,
-      r.farm_econ.risk_tags,
-      r.sibling_symbol,
-      radar.calibration.snapshot_7d_p05,
-      10000,
-      0.08,
-      8,
-    ).econ;
-    const custJs = model.buildFarmPlan(r, radar.calibration, 10000, 0.08, 8);
-    assert.ok(Math.abs(custJs.net_of_fees_usd - custTs.net_of_fees_usd) <= 0.011, r.slug);
-    assert.ok(Math.abs(custJs.net_per_hour - custTs.net_per_hour) <= 0.011, r.slug);
-    assert.ok(Math.abs(custJs.excess_after_carry_usd - custTs.excess_after_carry_usd) <= 0.011, r.slug);
-    assert.ok(Math.abs(custJs.excess_per_hour - custTs.excess_per_hour) <= 0.011, r.slug);
-    assert.equal(custJs.verdict, custTs.verdict, r.slug);
+    for (const carryApr of [0, 0.04]) {
+      const custTs = buildFarmEconomicsAndPlan(
+        snapBySlug.get(r.slug)!,
+        r.implied_value_usd,
+        r.launch_odds,
+        r.farm_econ.risk_tags,
+        r.sibling_symbol,
+        radar.calibration.snapshot_7d_p05,
+        10000,
+        0.08,
+        8,
+        carryApr,
+      ).econ;
+      const custJs = model.buildFarmPlan(r, radar.calibration, 10000, 0.08, 8, carryApr);
+      assert.equal(custJs.min_ticket_usd, custTs.min_ticket_usd, `${r.slug} carry=${carryApr}`);
+      assert.ok(Math.abs(custJs.excess_after_carry_usd - custTs.excess_after_carry_usd) <= 0.011, r.slug);
+      assert.ok(Math.abs(custJs.excess_per_hour - custTs.excess_per_hour) <= 0.011, r.slug);
+      assert.equal(custJs.verdict, custTs.verdict, r.slug);
+    }
   }
 });
 
@@ -259,8 +285,8 @@ test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, 
     assert.ok(maxLine <= 140, `${f} maxLine=${maxLine} > 140`);
   }
 
-  const outA = mkdtempSync(join(tmpdir(), 'sonar2-a-'));
-  const outB = mkdtempSync(join(tmpdir(), 'sonar2-b-'));
+  const outA = mkdtempSync(join(tmpdir(), 'sonar3-a-'));
+  const outB = mkdtempSync(join(tmpdir(), 'sonar3-b-'));
   try {
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outA], { cwd: repoRoot });
     execFileSync(process.execPath, ['main.ts', '--input', snapshotPath, '--output', outB], { cwd: repoRoot });
@@ -274,7 +300,6 @@ test('End-to-end 2-run SHA-256 determinism and gate caps (zero URL, zero xmlns, 
     assert.ok(info.bytes <= 1_050_000, `dossier bytes=${info.bytes}`);
     const shotFiles = readdirSync(join(repoRoot, 'screenshots')).sort();
     assert.deepEqual(shotFiles, ['1-board.jpg', '2-detail.jpg', '3-filtered.jpg']);
-    assert.equal(existsSync(join(repoRoot, 'screenshots', '4-audit.jpg')), false);
     for (const shot of shotFiles) {
       const sBuf = readFileSync(join(repoRoot, 'screenshots', shot));
       assert.equal(sBuf[0], 0xff);

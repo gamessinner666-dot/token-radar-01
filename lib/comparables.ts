@@ -370,6 +370,7 @@ export interface OddsEvalOpts {
   useLegacy?: boolean;
   useSector?: boolean;
   useCatShare?: boolean;
+  catK?: number;
   useTvl?: boolean;
   useG7d?: boolean;
   useChains?: boolean;
@@ -382,7 +383,7 @@ export const sigmoid = (z: number): number => 1 / (1 + Math.exp(-clamp(z, -20, 2
 export function fitLogisticOdds(
   train: readonly StandalonePeer[],
   opts: OddsEvalOpts,
-): { coef: number[]; predict: (p: StandalonePeer) => number } {
+): { coef: number[]; catLogitMap: Record<string, number>; predict: (p: StandalonePeer) => number } {
   const baseR = clamp(train.filter((r) => r.y === 1).length / Math.max(1, train.length), 0.05, 0.95);
   const catCounts = new Map<string, { n: number; y: number }>();
   if (opts.useCatShare) {
@@ -394,16 +395,23 @@ export function fitLogisticOdds(
       catCounts.set(k, cur);
     }
   }
+  const m = opts.catK ?? 6;
+  const baseLogit = Math.log(baseR / (1 - baseR));
+  const catLogitMap: Record<string, number> = {};
+  if (opts.useCatShare) {
+    for (const [cat, s] of [...catCounts.entries()].sort((a, b) => compareCodeUnit(a[0], b[0]))) {
+      const p = clamp((s.y + m * baseR) / (s.n + m), 0.05, 0.95);
+      catLogitMap[cat] = Math.round((Math.log(p / (1 - p)) - baseLogit) * 10_000) / 10_000;
+    }
+  }
   const catLogit = (cat: string | undefined): number => {
-    const s = catCounts.get(cat ?? 'Uncategorized') ?? { n: 0, y: 0 };
-    const m = 8;
-    const p = clamp((s.y + m * baseR) / (s.n + m), 0.05, 0.95);
-    return Math.log(p / (1 - p)) - Math.log(baseR / (1 - baseR));
+    const k = cat ?? 'Uncategorized';
+    return Object.prototype.hasOwnProperty.call(catLogitMap, k) ? catLogitMap[k]! : 0;
   };
 
   const feat = (p: StandalonePeer): number[] => {
     const v = [1];
-    if (opts.useAge) v.push(Math.log(p.age_filled + 0.15));
+    if (opts.useAge) v.push(Math.log(1 + p.age_filled));
     if (opts.useLegacy) v.push(p.legacy);
     if (opts.useCatShare) v.push(catLogit(p.category));
     if (opts.useSector) {
@@ -445,6 +453,7 @@ export function fitLogisticOdds(
 
   return {
     coef,
+    catLogitMap,
     predict: (p: StandalonePeer) => {
       const x = feat(p);
       let z = 0;

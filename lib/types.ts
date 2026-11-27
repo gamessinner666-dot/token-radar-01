@@ -1,4 +1,4 @@
-// Shared TypeScript interfaces for Token Radar 01 radar-3 (Node 22 erasable TS, stdlib only).
+// Shared TypeScript interfaces for Token Radar 01 sonar-3 (Node 22 erasable TS, stdlib only).
 
 export interface SnapshotProtocol {
   slug: string;
@@ -79,6 +79,22 @@ export interface OddsAblationRow {
   status: 'baseline' | 'kept' | 'tested_not_kept' | 'control';
 }
 
+export interface AgeBucketStat {
+  label: string;
+  tokenized: number;
+  total: number;
+  rate: number;
+}
+
+export interface SignHoldsStat {
+  beta_tvl: number;
+  beta_age: number;
+  beta_legacy: number;
+  beta_cat_share: number;
+  beta_odds_tvl: number;
+  beta_g7d: number;
+}
+
 export interface PriceModelParams {
   ref_tvl_usd: number;
   intercept: number;
@@ -121,7 +137,10 @@ export interface OddsModelParams {
   beta_age_se: number;
   beta_legacy: number;
   beta_legacy_se: number;
-  beta_sectors: number[];
+  beta_cat_share: number;
+  beta_cat_share_se: number;
+  cat_share_k: number;
+  cat_logit: Record<string, number>;
   beta_tvl: number;
   beta_tvl_se: number;
   beta_g7d: number;
@@ -139,11 +158,13 @@ export interface OddsModelParams {
   wf_acc: number;
   base_cv10_brier: number;
   base_wf_brier: number;
+  age_buckets: AgeBucketStat[];
+  sign_holds: SignHoldsStat;
   ablation: OddsAblationRow[];
 }
 
 export interface ModelCalibration {
-  model_version: 'sonar-2';
+  model_version: 'sonar-3';
   price_model: PriceModelParams;
   odds_model: OddsModelParams;
   snapshot_7d_p05: number;
@@ -174,6 +195,7 @@ export type FarmVerdict = 'FARM' | 'MARGINAL' | 'SKIP';
 
 export interface FarmStepItem {
   phase: string;
+  when: string;
   action: string;
   cost_usd: number;
   cost_label: string;
@@ -187,8 +209,10 @@ export interface FarmEconomics {
   family_label: string;
   gas_tier: string;
   deposit_usd: number;
+  min_ticket_usd: number | null;
   drop_share: number;
   horizon_weeks: number;
+  carry_apr: number;
   setup_fee_usd: number;
   weekly_fee_per_week_usd: number;
   weekly_fee_usd: number;
@@ -318,6 +342,7 @@ export interface RawCompPoint {
 
 export interface RawPeerPoint {
   slug: string;
+  category: string;
   sector: SectorName;
   tvl_usd: number;
   change_7d: number | null;
@@ -330,7 +355,7 @@ export interface RadarData {
   as_of: string;
   source: string;
   floor_usd: number;
-  model_version: 'sonar-2';
+  model_version: 'sonar-3';
   ledger: LedgerBuckets;
   calibration: ModelCalibration;
   summary: RadarSummary;
